@@ -5,8 +5,8 @@ interface Job {
 }
 
 /**
- * 글로벌 동시 실행 상한 + lane(보통 userId) 단위 라운드로빈 공정 스케줄러.
- * 한 유저가 요청을 몰아넣어도 다른 유저의 run이 굶지 않는다.
+ * Fair scheduler: a global concurrency cap plus round-robin across lanes
+ * (usually userId). One user flooding the queue cannot starve other users' runs.
  */
 export class FairScheduler {
   private readonly lanes = new Map<string, Job[]>();

@@ -3,10 +3,10 @@ import type { Agentbox } from '../agentbox.js';
 import type { RunRequest } from '../types.js';
 
 /**
- * 최소 HTTP 파사드.
- *  - GET  /v1/harnesses : 등록된 하네스 목록
- *  - GET  /v1/stats     : 세션/큐 상태
- *  - POST /v1/runs      : run 실행, 이벤트를 SSE로 스트리밍
+ * Minimal HTTP facade.
+ *  - GET  /v1/harnesses : registered harness list
+ *  - GET  /v1/stats     : session/queue status
+ *  - POST /v1/runs      : execute a run, streaming events over SSE
  */
 export function createHttpServer(box: Agentbox): http.Server {
   return http.createServer(async (req, res) => {

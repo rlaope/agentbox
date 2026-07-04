@@ -1,4 +1,4 @@
-/** 지원하는 agent 백엔드 종류. 드라이버 주입으로 확장 가능하다. */
+/** Supported agent backends. Extendable by injecting custom drivers. */
 export type AgentBackend = 'pi' | 'codex' | 'claude';
 
 export type SandboxKind = 'local' | 'container';
@@ -9,18 +9,18 @@ export interface McpServerConfig {
   env?: Record<string, string>;
 }
 
-/** 하네스가 agent에 허용하는 tool 표면. 백엔드별 매핑은 드라이버가 담당한다. */
+/** The tool surface a harness grants the agent. Backend mapping is the driver's job. */
 export interface ToolPolicy {
-  /** 백엔드 네이티브 tool 이름 allowlist (예: claude의 "Bash(node:*)", "Write") */
+  /** Backend-native tool name allowlist (e.g. claude's "Bash(node:*)", "Write") */
   allow?: string[];
   deny?: string[];
   mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface WorkspaceSpec {
-  /** 세션 워크스페이스 생성 시 복사할 템플릿 디렉토리 */
+  /** Template directory copied into the session workspace on creation */
   templateDir?: string;
-  /** 상대경로 → 내용. 워크스페이스 생성 시 시드 파일로 기록 */
+  /** Relative path → content, written as seed files on workspace creation */
   seedFiles?: Record<string, string>;
 }
 
@@ -30,8 +30,8 @@ export interface HarnessLimits {
 }
 
 /**
- * 하네스 = 특정 작업 유형(ppt 생성, bash 스크립트 생성 등)에 맞춰
- * agent 백엔드 + tool 표면 + 산출물 계약을 선언한 실행 프로파일.
+ * A harness is the execution profile of one task type (PPT generation,
+ * bash script generation, …): agent backend + tool surface + artifact contract.
  */
 export interface HarnessSpec {
   name: string;
@@ -41,15 +41,15 @@ export interface HarnessSpec {
   systemPrompt?: string;
   tools?: ToolPolicy;
   workspace?: WorkspaceSpec;
-  /** run 종료 후 워크스페이스에서 수집할 산출물 glob 목록 */
+  /** Artifact globs collected from the workspace after the run ends */
   artifacts?: { globs: string[] };
   limits?: HarnessLimits;
   sandbox?: SandboxKind;
-  /** 드라이버별 세부 옵션 (CLI 경로, 인자 오버라이드 등) */
+  /** Driver-specific options (CLI path, argument overrides, …) */
   driverOptions?: Record<string, unknown>;
 }
 
-/** 세션 식별자. 세션 = 유저 1명의 작업 목표 1개 = 워크스페이스 1개. */
+/** Session identity. One session = one user's one goal = one workspace. */
 export interface SessionKey {
   userId: string;
   goalId: string;
@@ -62,7 +62,7 @@ export interface RunRequest {
 }
 
 export interface Artifact {
-  /** 워크스페이스 루트 기준 상대경로 */
+  /** Path relative to the workspace root */
   path: string;
   absPath: string;
   bytes: number;
@@ -88,14 +88,14 @@ export type RunEvent =
   | { type: 'run:done'; result: RunResult }
   | { type: 'run:error'; error: string; result?: RunResult };
 
-/** 백엔드가 warm resume에 쓰는 세션 상태 (claude session id, codex thread id 등) */
+/** Per-backend state used for warm resume (claude session id, codex thread id, …) */
 export interface BackendSessionState {
   resumeId?: string;
 }
 
 export interface Sandbox {
   readonly kind: SandboxKind;
-  /** 워크스페이스 루트 절대경로. 드라이버는 이 안에서만 작업한다. */
+  /** Absolute workspace root. Drivers must operate only inside it. */
   readonly root: string;
   writeFile(relPath: string, content: string | Uint8Array): Promise<void>;
   collect(globs: string[]): Promise<Artifact[]>;
@@ -112,7 +112,7 @@ export interface DriverContext {
   harness: HarnessSpec;
   prompt: string;
   sandbox: Sandbox;
-  /** 세션이 보관하는 백엔드 상태. 드라이버가 resumeId를 갱신한다. */
+  /** Backend state held by the session; the driver updates resumeId. */
   state: BackendSessionState;
   signal: AbortSignal;
 }

@@ -29,7 +29,7 @@ test('round-robins across lanes so one user cannot starve others', async () => {
     });
   const all = [job('a', 'a1'), job('a', 'a2'), job('a', 'a3'), job('b', 'b1')];
   await Promise.all(all);
-  // b의 유일한 job이 a의 대기열 전체 뒤로 밀리면 안 된다
+  // b's only job must not be pushed behind a's entire queue
   assert.ok(finished.indexOf('b1') < finished.indexOf('a3'));
 });
 

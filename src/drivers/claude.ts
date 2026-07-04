@@ -2,8 +2,8 @@ import type { DriverContext, RunEvent } from '../types.js';
 import { CliDriver, type CliInvocation, type CliParseState } from './cli.js';
 
 /**
- * Claude Code headless(`claude -p --output-format stream-json`) 어댑터.
- * tool 최소화는 --allowedTools/--disallowedTools로, warm resume은 --resume으로 매핑한다.
+ * Adapter for headless Claude Code (`claude -p --output-format stream-json`).
+ * Tool minimization maps to --allowedTools/--disallowedTools; warm resume maps to --resume.
  */
 export class ClaudeDriver extends CliDriver {
   readonly backend = 'claude' as const;

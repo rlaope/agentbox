@@ -2,9 +2,9 @@ import type { DriverContext, RunEvent } from '../types.js';
 import { CliDriver, type CliInvocation, type CliParseState } from './cli.js';
 
 /**
- * Codex CLI(`codex exec --json`) 어댑터. 워크스페이스 밖 접근은
- * --sandbox workspace-write로 차단하고, warm resume은 `codex exec resume`으로 매핑한다.
- * codex는 tool 단위 allowlist가 없어 격리는 sandbox 모드 단위로만 조절된다.
+ * Adapter for Codex CLI (`codex exec --json`). Access outside the workspace is
+ * blocked with --sandbox workspace-write; warm resume maps to `codex exec resume`.
+ * codex has no per-tool allowlist, so isolation is tuned at the sandbox-mode level only.
  */
 export class CodexDriver extends CliDriver {
   readonly backend = 'codex' as const;
@@ -16,7 +16,7 @@ export class CodexDriver extends CliDriver {
     args.push('--json', '--skip-git-repo-check', '--cd', ctx.sandbox.root);
     args.push('--sandbox', (harness.driverOptions?.sandboxMode as string) ?? 'workspace-write');
     if (harness.model) args.push('--model', harness.model);
-    // codex exec에는 시스템 프롬프트 플래그가 없어 프롬프트 앞에 붙인다.
+    // codex exec has no system prompt flag, so prepend it to the prompt.
     const prompt = harness.systemPrompt ? `${harness.systemPrompt}\n\n${ctx.prompt}` : ctx.prompt;
     args.push(prompt);
     const command = (harness.driverOptions?.command as string) ?? 'codex';

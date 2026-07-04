@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { Agentbox } from '../src/agentbox.js';
 import type { AgentDriver, DriverContext, DriverOutcome, RunEvent } from '../src/types.js';
 
-/** 실제 CLI 없이 코어 사이클을 검증하기 위한 테스트 더블 */
+/** Test double for verifying the core cycle without real agent CLIs */
 class FakeDriver implements AgentDriver {
   readonly backend = 'claude' as const;
   readonly seenResumeIds: Array<string | undefined> = [];

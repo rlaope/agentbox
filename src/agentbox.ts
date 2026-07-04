@@ -19,23 +19,24 @@ import type {
 } from './types.js';
 
 export interface AgentboxOptions {
-  /** 세션 워크스페이스가 놓일 루트. 기본값 ./.agentbox */
+  /** Root directory for session workspaces. Defaults to ./.agentbox */
   baseDir?: string;
-  /** 서버 전체 동시 run 상한. 기본값 4 */
+  /** Server-wide cap on concurrent runs. Defaults to 4 */
   maxConcurrentRuns?: number;
   session?: {
     idleTtlMs?: number;
     maxSessions?: number;
   };
-  /** 백엔드별 드라이버 오버라이드 (테스트 더블, 커스텀 어댑터) */
+  /** Per-backend driver overrides (test doubles, custom adapters) */
   drivers?: Partial<Record<AgentBackend, AgentDriver>>;
-  /** 격리 백엔드 추가/교체 (기본은 local 프로세스 샌드박스) */
+  /** Additional/replacement isolation backends (default is the local process sandbox) */
   sandboxProviders?: SandboxProvider[];
 }
 
 /**
- * 프레임워크 진입점. 하네스 등록소 + 세션 매니저 + 공정 스케줄러 + 드라이버를
- * 묶어 "요청 → 세션 획득 → 하네스 실행 → 산출물 수집"의 한 사이클을 제공한다.
+ * Framework entry point. Ties the harness registry, session manager, fair
+ * scheduler, and drivers into one cycle:
+ * request → acquire session → run harness → collect artifacts.
  */
 export class Agentbox {
   private readonly registry = new HarnessRegistry();

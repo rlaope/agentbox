@@ -1,6 +1,6 @@
 const SPECIALS = new Set(['\\', '^', '$', '.', '|', '+', '(', ')', '[', ']', '{', '}']);
 
-/** `*`, `**`, `?`만 지원하는 최소 glob → RegExp 변환. 경로 구분자는 `/`. */
+/** Minimal glob → RegExp supporting only `*`, `**`, `?`. Path separator is `/`. */
 export function globToRegExp(glob: string): RegExp {
   let re = '';
   for (let i = 0; i < glob.length; i++) {

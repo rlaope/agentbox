@@ -6,9 +6,10 @@ import { globToRegExp, matchesAny } from '../util/glob.js';
 const SKIP_DIRS = new Set(['node_modules', '.git', '__pycache__']);
 
 /**
- * 프로세스 수준 격리 샌드박스. 세션마다 baseDir 아래 전용 워크스페이스
- * 디렉토리를 만들고 그 안에서만 읽고 쓴다. 신뢰 경계가 필요한 배포에서는
- * SandboxProvider 인터페이스로 container/microVM 구현을 대신 꽂는다.
+ * Process-level isolation sandbox. Each session gets a dedicated workspace
+ * directory under baseDir and reads/writes only inside it. Deployments that
+ * need a hard trust boundary plug a container/microVM implementation in
+ * behind the SandboxProvider interface instead.
  */
 export class LocalSandbox implements Sandbox {
   readonly kind = 'local' as const;

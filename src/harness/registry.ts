@@ -3,7 +3,7 @@ import type { HarnessSpec } from '../types.js';
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 const BACKENDS = new Set(['pi', 'codex', 'claude']);
 
-/** 타입 추론을 유지하면서 하네스를 선언하기 위한 헬퍼 */
+/** Helper for declaring a harness while keeping type inference */
 export function defineHarness(spec: HarnessSpec): HarnessSpec {
   return spec;
 }

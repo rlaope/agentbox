@@ -8,7 +8,7 @@ export interface CliInvocation {
   env?: Record<string, string>;
 }
 
-/** run 1회 동안의 파싱 상태. 드라이버 인스턴스는 stateless로 공유된다. */
+/** Parse state for a single run. Driver instances are shared and stateless. */
 export interface CliParseState {
   finalText: string;
   error?: string;
@@ -16,7 +16,7 @@ export interface CliParseState {
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
-/** 자식 프로세스로 전달할 환경변수 allowlist. 세션 간 비밀 누출 표면을 줄인다. */
+/** Environment allowlist for child processes, shrinking the secret-leak surface between sessions. */
 const ENV_ALLOWLIST = [
   'PATH',
   'HOME',
@@ -30,8 +30,9 @@ const ENV_ALLOWLIST = [
 ];
 
 /**
- * CLI 기반 agent 백엔드 공통 실행기. 워크스페이스를 cwd로 고정해 spawn하고
- * stdout을 라인 단위로 파싱해 RunEvent로 변환하며 timeout/cancel을 처리한다.
+ * Shared runner for CLI-based agent backends. Spawns the CLI with the
+ * workspace pinned as cwd, parses stdout line by line into RunEvents,
+ * and handles timeout/cancellation.
  */
 export abstract class CliDriver implements AgentDriver {
   abstract readonly backend: AgentBackend;
@@ -85,7 +86,7 @@ export abstract class CliDriver implements AgentDriver {
         try {
           this.onLine(line, parse, ctx, emit);
         } catch {
-          // 파싱 불가 라인은 무시한다 (백엔드 출력 포맷 변화에 견디기 위함)
+          // Ignore unparseable lines to stay resilient to backend output format changes.
         }
       });
 

@@ -1,25 +1,38 @@
 # agentbox
 
-The AI Agent Framework — Sandboxed Multi-Agent Orchestration, High-Throughput Stateful Agent, Modular Agent Session Manager & Runtime.
+**The AI Agent Framework — Sandboxed Multi-Agent Orchestration, High-Throughput Stateful Agents, Modular Agent Session Manager & Runtime.**
 
-SaaS 서버 안에서 coding agent(pi / codex / claude code)를 실행 엔진으로 운영하기 위한 프레임워크다. 유저 요청이 API로 들어오면 세션을 열어 하네스와 함께 작업하고 산출물을 반환한다. ppt 생성, 문서 생성, bash 스크립트 생성 같은 작업 유형별 프로파일을 하네스 하나로 선언한다.
+agentbox lets a SaaS backend run coding agents (pi / codex / claude code) as its execution engine. A user request comes in through your API, agentbox acquires a session, runs the agent inside an isolated workspace with a task-specific harness, and returns the artifacts. Declare one harness per task type — PPT generation, document generation, bash script generation, anything an agent can build inside a workspace.
 
 ```
-유저 → SaaS 클라이언트 → API call → agentbox
-        └ 세션 획득(재사용) → 하네스 실행(codex/claude/pi) → 산출물 반환
+user → SaaS client → API call → agentbox
+        └ acquire session (reused when warm)
+          → run harness (codex / claude / pi)
+          → collect & return artifacts
 ```
 
-## 핵심 개념
+## Why
 
-- **Harness** — 작업 유형 하나의 실행 프로파일. 백엔드, tool allowlist, 워크스페이스 시드, 산출물 glob, 턴/시간 한도를 선언한다.
-- **Session** — `(userId, goalId)` 단위. 워크스페이스와 백엔드 resume 상태를 소유하며, 같은 단위의 후속 요청은 데워진 세션을 재활용한다.
-- **Sandbox** — 세션 파일 영역 격리. 기본은 프로세스 수준(local), 인터페이스 뒤로 container/microVM을 꽂는다.
-- **Driver** — pi / codex / claude 어댑터. 하네스 선언을 백엔드 옵션으로 번역하고 출력을 공통 이벤트로 정규화한다.
-- **FairScheduler** — 글로벌 동시 run 상한 + 유저 lane 라운드로빈으로 처리량과 공정성을 지킨다.
+Running a general-purpose coding agent server-side is powerful but raises four problems at once:
 
-상세 설계는 [docs/DESIGN.md](docs/DESIGN.md)에 있다.
+1. **Isolation** — different users/projects must never touch each other's files.
+2. **Throughput** — many concurrent sessions, and follow-up requests for the same unit of work should reuse an already-warm session instead of rebuilding context.
+3. **Minimal tool surface** — an agent with every tool enabled is slower and riskier. "Generate a PPT" only needs file writes and `node`. Tool surface should be declared per task type.
+4. **Pluggable backends** — the same harness should run on pi, codex, or claude code.
 
-## 사용 예
+agentbox makes these four the core contract of the framework.
+
+## Core concepts
+
+- **Harness** — an execution profile for one task type: backend, model, system prompt, tool allowlist, workspace seed, artifact globs, turn/time limits.
+- **Session** — one `(userId, goalId)` pair owning one workspace and per-backend resume state. Follow-up requests for the same pair are routed to the same warm session (claude `--resume`, codex `exec resume`).
+- **Sandbox** — workspace isolation behind a provider interface. Process-level (`local`) by default; container/microVM providers plug in behind the same interface.
+- **Driver** — a backend adapter that translates the harness declaration into backend-native flags and normalizes output streams into common run events.
+- **FairScheduler** — a global concurrency cap plus per-user round-robin lanes, so one user's burst cannot starve everyone else.
+
+See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture.
+
+## Usage
 
 ```ts
 import { Agentbox, defineHarness } from 'agentbox';
@@ -27,7 +40,7 @@ import { Agentbox, defineHarness } from 'agentbox';
 const pptGenerate = defineHarness({
   name: 'ppt-generate',
   backend: 'claude',
-  systemPrompt: '워크스페이스 안에서 out/deck.pptx를 생성한다.',
+  systemPrompt: 'Produce out/deck.pptx inside the workspace.',
   tools: { allow: ['Read', 'Write', 'Edit', 'Bash(node:*)'] },
   artifacts: { globs: ['out/**/*.pptx'] },
   limits: { maxTurns: 30, timeoutMs: 480_000 },
@@ -39,23 +52,25 @@ box.register(pptGenerate);
 const result = await box.run({
   session: { userId: 'u1', goalId: 'q2-deck' },
   harness: 'ppt-generate',
-  prompt: '2분기 실적 요약 5장짜리 덱',
+  prompt: 'A five-slide deck summarizing Q2 results',
 });
 console.log(result.artifacts); // [{ path: 'out/deck.pptx', ... }]
 ```
 
-HTTP 서버로 띄우려면:
+Or run it as an HTTP server:
 
 ```sh
 npx tsx examples/server.ts
 curl -N localhost:8787/v1/runs -d '{
   "session": { "userId": "u1", "goalId": "q2-deck" },
   "harness": "ppt-generate",
-  "prompt": "2분기 실적 요약 덱"
+  "prompt": "A five-slide deck summarizing Q2 results"
 }'
 ```
 
-## 개발
+Events stream back as SSE (`run:start`, `agent:message`, `tool:call`, `run:done`, …) so your client can render progress without knowing which backend is underneath.
+
+## Development
 
 ```sh
 npm install
@@ -63,6 +78,16 @@ npm run typecheck
 npm test
 ```
 
-## 상태
+Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only.
 
-v0.1 — 설계 + 코어 골격. local 샌드박스, 3개 백엔드 드라이버, 세션 매니저, 공정 스케줄러, HTTP 파사드, 예제 하네스 3종이 포함된다. container provider와 pi tool 제어는 로드맵에 있다.
+## Status
+
+v0.1 — design + working core skeleton: local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade, and three example harnesses. Container provider and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#10-roadmap).
+
+## Contributing
+
+Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE)

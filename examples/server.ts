@@ -2,14 +2,14 @@ import { Agentbox, createHttpServer } from '../src/index.js';
 import { bashGenerate, docGenerate, pptGenerate } from './harnesses.js';
 
 /**
- * 데모 서버 부팅:
+ * Boot the demo server:
  *   npx tsx examples/server.ts
  *
- * 실행 예:
+ * Example request:
  *   curl -N localhost:8787/v1/runs -d '{
  *     "session": { "userId": "u1", "goalId": "quarterly-deck" },
  *     "harness": "ppt-generate",
- *     "prompt": "2분기 실적 요약 5장짜리 덱"
+ *     "prompt": "A five-slide deck summarizing Q2 results"
  *   }'
  */
 const box = new Agentbox({ maxConcurrentRuns: 4 });

@@ -2,8 +2,30 @@
   "name": "agentbox",
   "version": "0.1.0",
   "type": "module",
-  "description": "Server-side orchestration framework for coding-agent harnesses (pi / codex / claude)",
+  "description": "The AI Agent Framework — sandboxed multi-agent orchestration, high-throughput stateful agents, modular agent session manager & runtime for pi / codex / claude",
   "license": "MIT",
+  "author": "rlaope",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rlaope/agentbox.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rlaope/agentbox/issues"
+  },
+  "homepage": "https://github.com/rlaope/agentbox#readme",
+  "keywords": [
+    "ai",
+    "agent",
+    "orchestration",
+    "coding-agent",
+    "sandbox",
+    "session",
+    "harness",
+    "codex",
+    "claude",
+    "pi",
+    "saas"
+  ],
   "engines": {
     "node": ">=20"
   },
