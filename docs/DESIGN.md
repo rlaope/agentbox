@@ -104,6 +104,8 @@ A harness declares `tools.allow / tools.deny`; the driver translates them into b
 
 A narrower tool surface (1) cuts the turns an agent wastes exploring, lowering latency and cost, and (2) shrinks the blast radius under prompt injection. `limits.maxTurns` / `limits.timeoutMs` bound runaway runs.
 
+**Measured effect.** An A/B run against the real claude CLI (same task — read two files, write a summary — 3 runs each, minimal `[Read, Write]` vs full 9-tool surface) showed the minimal surface averaging **8% fewer turns, 11% fewer tool calls, and 12% lower latency**, with cost nearly flat (~1.5%). Two caveats: the cost floor is dominated by the mostly-cached system prompt and tool schemas, so on short tasks minimization saves latency and turns more than dollars; and the gap widens on tasks whose full toolset invites exploration (web search, repo-wide grep) — the trivial task here understates it. Notably, the minimal run's tool trace shows the agent *attempting* a denied `Bash` call, direct evidence the allowlist constrains behavior rather than merely trimming the prompt.
+
 Custom tools enter through `tools.mcpServers`: declared MCP servers are written into the workspace as `.agentbox.mcp.json` and injected into the claude backend via `--mcp-config` with `--strict-mcp-config`, so the harness declaration remains the complete, closed tool surface — the agent gets exactly the declared servers and nothing else.
 
 ## 7. Harness authoring layers
