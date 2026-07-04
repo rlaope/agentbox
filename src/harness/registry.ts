@@ -35,6 +35,10 @@ export class HarnessRegistry {
     return spec;
   }
 
+  has(name: string): boolean {
+    return this.specs.has(name);
+  }
+
   list(): HarnessSpec[] {
     return [...this.specs.values()];
   }

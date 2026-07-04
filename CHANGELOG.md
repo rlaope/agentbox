@@ -2,6 +2,15 @@
 
 All notable changes to agentbox are documented here. Versions follow semver.
 
+## Unreleased
+
+Four capabilities that make a run more than fire-and-forget, built on top of agentbox's sandbox ownership. Implemented with an adversarial multi-agent review pass that surfaced and fixed real defects before merge (fail-open guardrail regex, guardrail-after-upload ordering, verify running outside the session lock, unguarded event sink, pipeline error handling).
+
+- **Execution-based verification** (`harness.verify`): after a successful run, run a check *inside the sandbox* against the produced artifacts (run the script, lint, open the file). Non-zero exit fails the run unless `required: false`; result on `RunResult.verification`. Runs inside the session lock so a concurrent same-session run can't corrupt the check.
+- **Guardrails** (`harness.guardrails.input/output`): validation functions gating a run's input and output. Input blocks prevent the run from spawning; output blocks run before artifact-store upload. Throwing fails closed. `denyOutputPatterns` built-in is stateless across runs (resets regex `lastIndex`).
+- **Pipelines** (`box.runPipeline`): run a sequence of harnesses in one session sharing the workspace (generate → verify → refine), stopping at the first non-succeeded step. Harness names are validated up front; a mid-pipeline throw returns a failed result rather than discarding completed steps.
+- **Human-in-the-loop** (`requireApproval` + `approvePipeline`/`rejectPipeline`): a pipeline step can pause for approval and resume later. Pending state is in-memory and cleared on `close()`.
+
 ## 1.1.0
 
 Benchmark-driven refinements (reviewed by an architect pass before implementation).

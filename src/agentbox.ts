@@ -7,6 +7,8 @@ import { PiDriver } from './drivers/pi.js';
 import { listHarnessFiles, loadHarnessFile } from './harness/markdown.js';
 import { HarnessRegistry } from './harness/registry.js';
 import { PackManager, type PackInfo } from './packs/manager.js';
+import { runGuardrails } from './guardrails/engine.js';
+import { runVerification } from './verify/runner.js';
 import { LocalSandboxProvider } from './sandbox/local.js';
 import { SnapshotManager } from './sandbox/snapshots.js';
 import { FairScheduler, QueueFullError, QueueTimeoutError } from './scheduler/scheduler.js';
@@ -20,12 +22,25 @@ import type {
   RunEvent,
   RunRequest,
   RunResult,
+  PipelineResult,
+  PipelineStep,
   RunStatus,
   SandboxKind,
   SandboxProvider,
   SessionKey,
+  VerificationResult,
   WorkspaceSpec,
 } from './types.js';
+
+/** In-memory state of a paused pipeline awaiting approval. */
+interface PendingPipeline {
+  pipelineId: string;
+  session: SessionKey;
+  steps: PipelineStep[];
+  done: RunResult[];
+  /** Index of the next step to run. */
+  from: number;
+}
 
 /**
  * Lifecycle hooks — middleware-style observation points. Hook failures are
@@ -90,6 +105,7 @@ export class Agentbox {
   /** markdown file absolute path → registered harness name */
   private readonly harnessFiles = new Map<string, string>();
   private readonly activeRuns = new Map<string, { abort: AbortController; session: SessionKey }>();
+  private readonly pendingPipelines = new Map<string, PendingPipeline>();
   private readonly hooks: AgentboxHooks;
   private readonly artifactStore?: ArtifactStore;
   /** Finished runs, insertion-ordered; oldest evicted past historyLimit. */
@@ -226,7 +242,13 @@ export class Agentbox {
     let toolCalls = 0;
     const emit = (event: RunEvent) => {
       if (event.type === 'tool:call') toolCalls++;
-      onEvent(event);
+      // The caller's event sink is observability; a throwing sink must not
+      // break the run loop (same contract as hooks).
+      try {
+        onEvent(event);
+      } catch {
+        // swallow
+      }
       void this.safeHook(() => this.hooks.onEvent?.(runId, event));
     };
     const session = await this.sessions.acquire(request.session, harness.sandbox ?? 'local', harness.workspace);
@@ -236,27 +258,56 @@ export class Agentbox {
     await this.safeHook(() => this.hooks.onRunStart?.({ runId, request, harness }));
 
     let outcome: DriverOutcome;
-    try {
-      outcome = await this.scheduler.schedule(request.session.userId, () =>
-        session.runExclusive(async () => {
-          const attempt = await this.runAttempts(runId, request, harness, driver, session, abort.signal, emit);
-          // Persist resume state while still holding the session slot, so a
-          // restart resumes warm from the workspace.
-          await session.persistState();
-          return attempt;
-        }),
-      );
-    } catch (err) {
-      // Backpressure surfaces as a failed result, not a thrown error, so the
-      // caller and the SSE stream both see a terminal run state.
-      if (err instanceof QueueFullError || err instanceof QueueTimeoutError) {
-        outcome = { status: 'failed', finalText: '', error: err.message };
-      } else {
-        this.activeRuns.delete(runId);
-        throw err;
-      }
-    } finally {
+    let guardrailBlock: { stage: 'input' | 'output'; reason: string } | undefined;
+    let verification: VerificationResult | undefined;
+
+    // Input guardrails run before the agent; a block stops the run before it
+    // ever spawns a driver.
+    const inputVerdict = await runGuardrails(harness.guardrails?.input, {
+      session: request.session,
+      harness: harness.name,
+      prompt: request.prompt,
+    });
+    if (!inputVerdict.allowed) {
       this.activeRuns.delete(runId);
+      guardrailBlock = { stage: 'input', reason: inputVerdict.reason ?? 'blocked by input guardrail' };
+      outcome = { status: 'blocked', finalText: '', error: guardrailBlock.reason };
+    } else {
+      try {
+        outcome = await this.scheduler.schedule(request.session.userId, () =>
+          session.runExclusive(async () => {
+            let attempt = await this.runAttempts(runId, request, harness, driver, session, abort.signal, emit);
+            // Execution-based verification runs INSIDE the session lock: it
+            // spawns a live process against the workspace, so a queued run for
+            // the same session must not overwrite files mid-check.
+            if (attempt.status === 'succeeded' && harness.verify) {
+              verification = await runVerification(session.sandbox, harness.verify, abort.signal);
+              if (!verification.passed && harness.verify.required !== false) {
+                attempt = {
+                  status: 'failed',
+                  finalText: attempt.finalText,
+                  error: `verification failed (exit ${verification.exitCode}): ${verification.output.slice(-500)}`,
+                };
+              }
+            }
+            // Persist resume state while still holding the session slot, so a
+            // restart resumes warm from the workspace.
+            await session.persistState();
+            return attempt;
+          }),
+        );
+      } catch (err) {
+        // Backpressure surfaces as a failed result, not a thrown error, so the
+        // caller and the SSE stream both see a terminal run state.
+        if (err instanceof QueueFullError || err instanceof QueueTimeoutError) {
+          outcome = { status: 'failed', finalText: '', error: err.message };
+        } else {
+          this.activeRuns.delete(runId);
+          throw err;
+        }
+      } finally {
+        this.activeRuns.delete(runId);
+      }
     }
 
     if (outcome.status === 'succeeded' && harness.limits?.maxWorkspaceBytes !== undefined) {
@@ -273,7 +324,25 @@ export class Agentbox {
     let artifacts = harness.artifacts?.globs?.length
       ? await session.sandbox.collect(harness.artifacts.globs)
       : [];
-    if (this.artifactStore && artifacts.length > 0) {
+
+    // Output guardrails run BEFORE the artifact store upload, so a block
+    // actually prevents flagged content from being persisted externally.
+    if (outcome.status === 'succeeded' && harness.guardrails?.output?.length) {
+      const outputVerdict = await runGuardrails(harness.guardrails.output, {
+        session: request.session,
+        harness: harness.name,
+        prompt: request.prompt,
+        finalText: outcome.finalText,
+        artifacts,
+      });
+      if (!outputVerdict.allowed) {
+        guardrailBlock = { stage: 'output', reason: outputVerdict.reason ?? 'blocked by output guardrail' };
+        outcome = { status: 'blocked', finalText: outcome.finalText, error: guardrailBlock.reason };
+      }
+    }
+
+    // Upload only content that cleared verification and the output guardrail.
+    if (outcome.status === 'succeeded' && this.artifactStore && artifacts.length > 0) {
       try {
         artifacts = await this.artifactStore.store(runId, artifacts);
       } catch (err) {
@@ -296,6 +365,8 @@ export class Agentbox {
       artifacts,
       durationMs: Date.now() - startedAt,
       toolCalls,
+      verification,
+      guardrail: guardrailBlock,
       error: outcome.error,
     };
     this.history.set(runId, result);
@@ -313,6 +384,75 @@ export class Agentbox {
     }
     await this.safeHook(() => this.hooks.onRunEnd?.(result, request));
     return result;
+  }
+
+  /**
+   * Runs a sequence of harnesses in one session, sharing the workspace so each
+   * step builds on the last (generate → verify → refine). Steps stop at the
+   * first non-succeeded result. A step marked requireApproval pauses the
+   * pipeline (human-in-the-loop): the result comes back 'awaiting-approval'
+   * and resumes via approvePipeline. Pending state is in-memory — a process
+   * restart drops paused pipelines (the workspace itself still survives).
+   */
+  async runPipeline(
+    session: SessionKey,
+    steps: PipelineStep[],
+    onEvent: (event: RunEvent) => void = () => {},
+  ): Promise<PipelineResult> {
+    // Validate every step's harness up front, before any step runs side
+    // effects, so a typo in a later step fails fast instead of after work.
+    for (const step of steps) {
+      if (!this.registry.has(step.harness)) throw new Error(`unknown harness "${step.harness}" in pipeline`);
+    }
+    const pipelineId = randomUUID();
+    return this.advancePipeline({ pipelineId, session, steps, done: [], from: 0 }, onEvent);
+  }
+
+  /** Approves the paused step and continues the pipeline. */
+  async approvePipeline(pipelineId: string, onEvent: (event: RunEvent) => void = () => {}): Promise<PipelineResult> {
+    const pending = this.pendingPipelines.get(pipelineId);
+    if (!pending) throw new Error(`unknown or already-resolved pipeline "${pipelineId}"`);
+    this.pendingPipelines.delete(pipelineId);
+    return this.advancePipeline(pending, onEvent, true);
+  }
+
+  /** Rejects a paused pipeline; it ends 'cancelled' with the steps run so far. */
+  rejectPipeline(pipelineId: string): PipelineResult {
+    const pending = this.pendingPipelines.get(pipelineId);
+    if (!pending) throw new Error(`unknown or already-resolved pipeline "${pipelineId}"`);
+    this.pendingPipelines.delete(pipelineId);
+    return { pipelineId, session: pending.session, status: 'cancelled', steps: pending.done };
+  }
+
+  private async advancePipeline(
+    state: PendingPipeline,
+    onEvent: (event: RunEvent) => void,
+    approvedFirst = false,
+  ): Promise<PipelineResult> {
+    const { pipelineId, session, steps, done } = state;
+    for (let i = state.from; i < steps.length; i++) {
+      const step = steps[i];
+      // Pause before an approval-gated step, unless we were just approved
+      // to run exactly this one.
+      if (step.requireApproval && !(approvedFirst && i === state.from)) {
+        this.pendingPipelines.set(pipelineId, { pipelineId, session, steps, done: [...done], from: i });
+        return { pipelineId, session, status: 'awaiting-approval', steps: done, awaitingStep: i };
+      }
+      let result: RunResult;
+      try {
+        result = await this.run({ session, harness: step.harness, prompt: step.prompt }, onEvent);
+      } catch {
+        // An unexpected throw (e.g. missing backend driver) must not orphan the
+        // pipeline or discard completed steps — surface it as a failed result.
+        return { pipelineId, session, status: 'failed', steps: done };
+      }
+      done.push(result);
+      if (result.status !== 'succeeded') {
+        // Carry the step's own terminal status; PipelineStatus covers them all.
+        return { pipelineId, session, status: result.status, steps: done };
+      }
+    }
+    return { pipelineId, session, status: 'succeeded', steps: done };
   }
 
   /** Retry loop; runs inside the session's exclusive slot so attempts stay serialized. */
@@ -427,6 +567,7 @@ export class Agentbox {
     }
     for (const watcher of this.watchers) watcher.close();
     this.watchers.length = 0;
+    this.pendingPipelines.clear();
     await this.sessions.close();
   }
 }

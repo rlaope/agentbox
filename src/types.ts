@@ -51,6 +51,52 @@ export interface RetryPolicy {
 }
 
 /**
+ * Execution-based verification: after a successful run, run a command inside
+ * the sandbox to check the produced artifacts (run the script, lint the code,
+ * open the deck). Non-zero exit = verification failed. This leverages the
+ * sandbox — something model-only eval layers cannot do.
+ */
+export interface VerifySpec {
+  /** Command executed inside the workspace; non-zero exit means "failed". */
+  command: string[];
+  /** Fail the run when verification fails. Defaults to true. */
+  required?: boolean;
+  timeoutMs?: number;
+}
+
+export interface VerificationResult {
+  passed: boolean;
+  exitCode: number | null;
+  /** Tail of the verify command's combined output. */
+  output: string;
+}
+
+/** Context handed to a guardrail. `finalText`/`artifacts` are only set on output. */
+export interface GuardrailContext {
+  session: SessionKey;
+  harness: string;
+  prompt: string;
+  finalText?: string;
+  artifacts?: Artifact[];
+}
+
+export interface GuardrailVerdict {
+  allowed: boolean;
+  /** Why the input/output was blocked (surfaced on the run). */
+  reason?: string;
+}
+
+/** A guardrail validates input (the prompt) or output (result) of a run. */
+export type Guardrail = (ctx: GuardrailContext) => GuardrailVerdict | Promise<GuardrailVerdict>;
+
+export interface GuardrailPolicy {
+  /** Run before the agent; a block prevents the run from starting. */
+  input?: Guardrail[];
+  /** Run on the finished output; a block marks the run blocked. */
+  output?: Guardrail[];
+}
+
+/**
  * A harness is the execution profile of one task type (PPT generation,
  * bash script generation, …): agent backend + tool surface + artifact contract.
  */
@@ -67,6 +113,10 @@ export interface HarnessSpec {
   limits?: HarnessLimits;
   /** Retry policy for transient failures. Cancelled runs are never retried. */
   retry?: RetryPolicy;
+  /** Execution-based check run in the sandbox after a successful run. */
+  verify?: VerifySpec;
+  /** Input/output guardrails validating the prompt and the produced result. */
+  guardrails?: GuardrailPolicy;
   sandbox?: SandboxKind;
   /**
    * Environment variable names forwarded from the server process into this
@@ -107,7 +157,7 @@ export interface ArtifactStore {
   store(runId: string, artifacts: Artifact[]): Promise<Artifact[]>;
 }
 
-export type RunStatus = 'succeeded' | 'failed' | 'cancelled' | 'timeout';
+export type RunStatus = 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'blocked';
 
 export interface RunResult {
   runId: string;
@@ -120,7 +170,31 @@ export interface RunResult {
   durationMs: number;
   /** Tool calls the agent made this run (counted from the event stream) */
   toolCalls: number;
+  /** Result of the harness's verify command, when one is declared. */
+  verification?: VerificationResult;
+  /** Set when a guardrail blocked the run (status is then 'blocked'). */
+  guardrail?: { stage: 'input' | 'output'; reason: string };
   error?: string;
+}
+
+/** One step of a pipeline: a harness run in the shared session workspace. */
+export interface PipelineStep {
+  harness: string;
+  prompt: string;
+  /** Pause the pipeline before this step and wait for approval (HITL). */
+  requireApproval?: boolean;
+}
+
+export type PipelineStatus = 'succeeded' | 'failed' | 'timeout' | 'blocked' | 'cancelled' | 'awaiting-approval';
+
+export interface PipelineResult {
+  pipelineId: string;
+  session: SessionKey;
+  status: PipelineStatus;
+  /** Results of steps that have run so far, in order. */
+  steps: RunResult[];
+  /** Index of the step awaiting approval, when status is 'awaiting-approval'. */
+  awaitingStep?: number;
 }
 
 export type RunEvent =

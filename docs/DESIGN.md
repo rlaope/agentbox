@@ -124,6 +124,15 @@ All backend output is normalized into a common `RunEvent` stream: `run:start`, `
 
 Each `RunResult` carries `toolCalls` — the number of tool calls the agent made, counted centrally from the `tool:call` event stream so it is backend-neutral. It lets operators see which harnesses over-provision their tool allowlist (the A/B benchmark in §6 shows why that matters).
 
+### Verification, guardrails, and pipelines
+
+Four capabilities build on top of the run so a run isn't just fire-and-forget:
+
+- **Execution-based verification** — a harness `verify: { command }` runs a check *inside the sandbox* after a successful run, against what the agent actually produced (run the script, lint the code, open the deck). Non-zero exit fails the run unless `required: false`; the result rides on `RunResult.verification`. This is a differentiator: because agentbox owns the execution environment, it can verify by running the output, not just judging text.
+- **Guardrails** — `guardrails: { input, output }` are validation functions. Input guardrails run before the agent (a block prevents the run from ever spawning); output guardrails run on the finished result *before* artifacts are uploaded to any artifact store, so a block actually prevents flagged content from being persisted externally. A guardrail that throws fails closed (blocks). A blocked run has status `blocked` and `RunResult.guardrail = { stage, reason }`. A blocked run still returns its `finalText` and local `artifacts` in the result so the operator can audit what was flagged — the block gates external persistence, not visibility to the trusted caller.
+- **Pipelines** — `runPipeline(session, steps)` runs a sequence of harnesses in one session, sharing the workspace so each step builds on the last (generate → verify → refine). It stops at the first non-succeeded step. This is multi-agent composition done through the persistent workspace rather than message passing.
+- **Human-in-the-loop** — a pipeline step with `requireApproval: true` pauses: `runPipeline` returns `awaiting-approval` with the step index, and `approvePipeline(id)` / `rejectPipeline(id)` resume or cancel. Pending state is in-memory (a restart drops paused pipelines; the workspace survives) — durable pause is a future enhancement.
+
 Artifacts are declared as `artifacts.globs` on the harness. After the run ends, matching files are collected from the workspace and returned as `RunResult.artifacts` (relative path, absolute path, size). With an `ArtifactStore` configured (`artifactStore` option), collected artifacts are additionally uploaded to durable storage and annotated with a `url` — `LocalArtifactStore` archives to a directory, `S3ArtifactStore` PUTs to S3-compatible storage with dependency-free SigV4 signing (AWS S3, MinIO, R2 via `endpoint`). A store failure fails the run: losing durable copies should be loud. Serving the URLs to end users remains the SaaS layer's job.
 
 ## 9. API
