@@ -89,7 +89,7 @@ export class Agentbox {
   private readonly watchers: FSWatcher[] = [];
   /** markdown file absolute path → registered harness name */
   private readonly harnessFiles = new Map<string, string>();
-  private readonly activeRuns = new Map<string, AbortController>();
+  private readonly activeRuns = new Map<string, { abort: AbortController; session: SessionKey }>();
   private readonly hooks: AgentboxHooks;
   private readonly artifactStore?: ArtifactStore;
   /** Finished runs, insertion-ordered; oldest evicted past historyLimit. */
@@ -227,7 +227,7 @@ export class Agentbox {
     };
     const session = await this.sessions.acquire(request.session, harness.sandbox ?? 'local', harness.workspace);
     const abort = new AbortController();
-    this.activeRuns.set(runId, abort);
+    this.activeRuns.set(runId, { abort, session: request.session });
     emit({ type: 'run:start', runId, sessionId: session.id, harness: harness.name });
     await this.safeHook(() => this.hooks.onRunStart?.({ runId, request, harness }));
 
@@ -286,6 +286,7 @@ export class Agentbox {
       runId,
       harness: harness.name,
       sessionId: session.id,
+      session: request.session,
       status: outcome.status,
       finalText: outcome.finalText,
       artifacts,
@@ -384,10 +385,15 @@ export class Agentbox {
    * Returns false when the run is unknown or already finished.
    */
   cancel(runId: string): boolean {
-    const abort = this.activeRuns.get(runId);
-    if (!abort) return false;
-    abort.abort();
+    const active = this.activeRuns.get(runId);
+    if (!active) return false;
+    active.abort.abort();
     return true;
+  }
+
+  /** Session key of an active or finished run (for tenant scoping). */
+  runSession(runId: string): SessionKey | undefined {
+    return this.activeRuns.get(runId)?.session ?? this.history.get(runId)?.session;
   }
 
   get stats(): AgentboxStats {

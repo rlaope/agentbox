@@ -8,6 +8,20 @@ export interface HttpServerOptions {
    * open — only do that behind a trusted network boundary.
    */
   apiKeys?: string[];
+  /**
+   * Keys with tenant bindings: a bound key can only start, query, and cancel
+   * runs for its userIds / harnesses, so a leaked key exposes one tenant,
+   * not the fleet. Combines with apiKeys (which stay unrestricted).
+   */
+  keys?: KeyBinding[];
+}
+
+export interface KeyBinding {
+  key: string;
+  /** When set, the key may only act for these userIds. */
+  userIds?: string[];
+  /** When set, the key may only start these harnesses. */
+  harnesses?: string[];
 }
 
 /**
@@ -22,12 +36,24 @@ export interface HttpServerOptions {
  * Auth: pass `apiKeys`; requests must carry `Authorization: Bearer <key>`
  * or `x-api-key: <key>`.
  */
+const UNRESTRICTED: KeyBinding = { key: '' };
+
 export function createHttpServer(box: Agentbox, opts: HttpServerOptions = {}): http.Server {
-  const apiKeys = new Set(opts.apiKeys ?? []);
+  const bindings = new Map<string, KeyBinding>();
+  for (const key of opts.apiKeys ?? []) bindings.set(key, UNRESTRICTED);
+  for (const binding of opts.keys ?? []) bindings.set(binding.key, binding);
+  const authRequired = bindings.size > 0;
+
+  const userAllowed = (binding: KeyBinding, userId: string) =>
+    !binding.userIds || binding.userIds.includes(userId);
+
   return http.createServer(async (req, res) => {
     try {
-      if (apiKeys.size > 0 && !isAuthorized(req, apiKeys)) {
-        return sendJson(res, 401, { error: 'unauthorized' });
+      let binding = UNRESTRICTED;
+      if (authRequired) {
+        const resolved = resolveBinding(req, bindings);
+        if (!resolved) return sendJson(res, 401, { error: 'unauthorized' });
+        binding = resolved;
       }
       if (req.method === 'GET' && req.url === '/v1/harnesses') {
         const list = box.harnesses().map((h) => ({
@@ -41,18 +67,25 @@ export function createHttpServer(box: Agentbox, opts: HttpServerOptions = {}): h
         return sendJson(res, 200, box.stats);
       }
       if (req.method === 'GET' && req.url === '/v1/runs') {
-        return sendJson(res, 200, box.listRuns());
+        return sendJson(res, 200, box.listRuns().filter((run) => userAllowed(binding, run.session.userId)));
       }
       if (req.method === 'GET' && req.url?.startsWith('/v1/runs/')) {
         const runId = decodeURIComponent(req.url.slice('/v1/runs/'.length));
         const run = box.getRun(runId);
-        return sendJson(res, run ? 200 : 404, run ?? { error: 'run not found' });
+        if (!run || !userAllowed(binding, run.session.userId)) {
+          return sendJson(res, 404, { error: 'run not found' });
+        }
+        return sendJson(res, 200, run);
       }
       if (req.method === 'POST' && req.url === '/v1/runs') {
-        return await handleRun(box, req, res);
+        return await handleRun(box, req, res, binding);
       }
       if (req.method === 'DELETE' && req.url?.startsWith('/v1/runs/')) {
         const runId = decodeURIComponent(req.url.slice('/v1/runs/'.length));
+        const owner = box.runSession(runId);
+        if (!owner || !userAllowed(binding, owner.userId)) {
+          return sendJson(res, 404, { error: 'run not found' });
+        }
         const cancelled = box.cancel(runId);
         return sendJson(res, cancelled ? 200 : 404, cancelled ? { cancelled: true } : { error: 'run not found' });
       }
@@ -67,13 +100,24 @@ export function createHttpServer(box: Agentbox, opts: HttpServerOptions = {}): h
   });
 }
 
-async function handleRun(box: Agentbox, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+async function handleRun(
+  box: Agentbox,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  binding: KeyBinding,
+): Promise<void> {
   const body = await readBody(req);
   const request = parseRunRequest(body);
   if (!request) {
     return sendJson(res, 400, {
       error: 'expected body { session: { userId, goalId }, harness, prompt }',
     });
+  }
+  if (binding.userIds && !binding.userIds.includes(request.session.userId)) {
+    return sendJson(res, 403, { error: `key is not allowed to act for user "${request.session.userId}"` });
+  }
+  if (binding.harnesses && !binding.harnesses.includes(request.harness)) {
+    return sendJson(res, 403, { error: `key is not allowed to run harness "${request.harness}"` });
   }
 
   // Headers go out lazily on the first event, so pre-stream failures
@@ -121,11 +165,15 @@ function parseRunRequest(body: string): RunRequest | undefined {
   return { session: { userId, goalId }, harness, prompt };
 }
 
-function isAuthorized(req: http.IncomingMessage, apiKeys: Set<string>): boolean {
+function resolveBinding(req: http.IncomingMessage, bindings: Map<string, KeyBinding>): KeyBinding | undefined {
   const auth = req.headers.authorization;
-  if (auth?.startsWith('Bearer ') && apiKeys.has(auth.slice('Bearer '.length))) return true;
+  if (auth?.startsWith('Bearer ')) {
+    const binding = bindings.get(auth.slice('Bearer '.length));
+    if (binding) return binding;
+  }
   const headerKey = req.headers['x-api-key'];
-  return typeof headerKey === 'string' && apiKeys.has(headerKey);
+  if (typeof headerKey === 'string') return bindings.get(headerKey);
+  return undefined;
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {

@@ -36,6 +36,14 @@ export interface ContainerSandboxOptions {
    * Defaults to true.
    */
   persistHome?: boolean;
+  /**
+   * Egress policy point: HTTP_PROXY/HTTPS_PROXY are set to this URL inside
+   * the container (typically a startEgressProxy() instance) and
+   * host.docker.internal is mapped to the host gateway. Enforces the domain
+   * allowlist for proxy-honoring clients; pair with network "none" for
+   * hard deny-all.
+   */
+  egressProxyUrl?: string;
 }
 
 const HOME_DIR = '.agentbox-home';
@@ -68,6 +76,12 @@ export class ContainerSandbox extends LocalSandbox {
     if (o.persistHome) {
       args.push('-v', `${path.join(this.root, HOME_DIR)}:${HOME_MOUNT}`, '-e', `HOME=${HOME_MOUNT}`);
     }
+    if (o.egressProxyUrl) {
+      args.push('--add-host', 'host.docker.internal:host-gateway');
+      for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) {
+        args.push('-e', `${name}=${o.egressProxyUrl}`);
+      }
+    }
     for (const name of o.envPassthrough) {
       args.push('-e', name);
     }
@@ -97,6 +111,7 @@ export class ContainerSandboxProvider implements SandboxProvider {
       extraArgs: [],
       persistHome: true,
       snapshotsDir: opts.snapshotsDir ?? '',
+      egressProxyUrl: opts.egressProxyUrl ?? '',
       ...opts,
     };
   }

@@ -106,6 +106,7 @@ export interface RunResult {
   runId: string;
   harness: string;
   sessionId: string;
+  session: SessionKey;
   status: RunStatus;
   finalText: string;
   artifacts: Artifact[];

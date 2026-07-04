@@ -74,6 +74,7 @@ A container per request is overkill, so the unit of isolation is **a session = o
 - Secrets are additionally scoped per task type: `HarnessSpec.env` names extra variables forwarded only into that harness's runs (and across the container boundary via `-e`), so a PPT harness never sees the search harness's credentials.
 - `limits.maxWorkspaceBytes` enforces a per-session disk quota after each run; a run that blows the quota is failed rather than silently filling the host.
 - Backends enforce a second layer themselves: codex via `--sandbox workspace-write`, claude via the tool allowlist.
+- **Egress control (v0.9)**: container runs can point `HTTP_PROXY`/`HTTPS_PROXY` at a `startEgressProxy({ allowedDomains })` instance, so an agent's network reach is a declared allowlist (the model API, a package registry) rather than the whole internet — HTTPS is checked at the CONNECT hostname and tunneled end-to-end, plain HTTP is forwarded by absolute-URI, everything else gets 403. This is a policy point for proxy-honoring clients; pair it with the container `network: 'none'` mode for a hard deny-all.
 
 ### Sandbox provider abstraction
 The `SandboxProvider` interface (`create(id, spec) → Sandbox`) hides the isolation implementation, and `Sandbox.wrapCommand` decides how a driver's CLI invocation crosses the boundary (identity for `local`, `docker run ...` for containers). A harness opts in with `sandbox: 'container'`.
@@ -152,7 +153,7 @@ const result = await box.run(
 - `GET /v1/harnesses` — registered harness list
 - `GET /v1/stats` — sessions, running/queued/active runs, totals by status, average duration
 
-Auth: `createHttpServer(box, { apiKeys: [...] })` requires `Authorization: Bearer <key>` or `x-api-key` on every endpoint (401 otherwise). Without configured keys the facade is open and must sit behind a trusted network boundary.
+Auth: `createHttpServer(box, { apiKeys: [...] })` requires `Authorization: Bearer <key>` or `x-api-key` on every endpoint (401 otherwise). Without configured keys the facade is open and must sit behind a trusted network boundary. Tenant binding (`keys: [{ key, userIds, harnesses }]`) scopes a key to specific users and harnesses: a bound key can only start, list, look up, and cancel runs for its own userIds (403 on a foreign user or harness, 404 rather than leaking a run it may not see), so a leaked key exposes one tenant instead of the fleet.
 
 Pre-stream failures return proper status codes (404 unknown harness, 500 otherwise); queue overflow and queue timeout surface as terminal `run:error` events with a failed result rather than thrown errors.
 
@@ -165,6 +166,7 @@ Drivers were verified against real CLIs (claude 2.1.201, codex-cli 0.140.0, pi) 
 - **pi** — flag surface verified against the installed CLI (`-p`, `--append-system-prompt`, `--tools`/`--no-tools`, `--model`/`--provider`, `--session-dir`/`--continue`, `-e`/`--skill`). A full run needs a provider API key, which this environment does not have; the invocation is covered by unit tests.
 - **codex `--json` schema** remains experimental upstream; the parser stays defensive and ignores unrecognized lines.
 - **container sandbox** — verified against a real docker daemon (v0.7): a run executed inside an ephemeral `alpine:3` container through the full framework path, with the workspace bind-mount, the persistent `HOME` mount, and host-side artifact collection all confirmed.
+- **egress proxy** — verified against a real docker daemon (v0.9): a `curl` agent inside a container reached an allowlisted domain (HTTP 200) while a non-allowlisted domain was blocked (connection failed, recorded in the proxy's denied list).
 
 ## 11. Roadmap
 
@@ -175,4 +177,6 @@ Drivers were verified against real CLIs (claude 2.1.201, codex-cli 0.140.0, pi) 
 - **v0.6 (shipped)** — real-CLI verification of the claude/codex drivers (including warm resume), pi driver upgraded to the verified flag surface (`--tools` allowlist, extensions), MCP injection for codex, artifact stores (local archive + dependency-free S3), npm/tarball pack sources
 - **v0.7 (shipped)** — HTTP facade auth (API keys), run history (`GET /v1/runs[/{id}]`), resume-state persistence across restarts, session pre-warming (`prewarmSessions`), throughput benchmark (`bench/throughput.mts`), real-docker container verification
 - **v0.8 (shipped)** — multi-node scale-out (`ConsistentHashRouter` + `createGatewayServer` with session→node affinity, SSE proxying, fan-out lookups, aggregated stats) and snapshot/restore fast session creation (`SnapshotManager`, copy-on-write clones, `workspace.snapshot`)
-- **v0.9** — egress network control for container runs (proxy/domain allowlist), per-key tenant binding on the HTTP facade, shared queue (Redis/NATS) if per-node fairness proves insufficient
+- **v0.9 (shipped)** — egress network control for container runs (domain-allowlisting proxy), per-key tenant binding on the HTTP facade
+- **shared queue (Redis/NATS)** — deliberately *not* built. Per-node fairness is enforced by `FairScheduler` and sessions are pinned to nodes by the gateway, so a cross-node queue would only matter if one node saturated while another sat idle for the *same* session — impossible under session affinity. It stays out until a concrete need (e.g. cross-node work stealing for burst tenants) appears; adding it speculatively is complexity without a problem.
+- **v1.0** — npm publish, snapshot/restore for the container layer (image-level warm pools), first-class metrics export (OpenTelemetry)
