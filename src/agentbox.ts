@@ -6,6 +6,7 @@ import { CodexDriver } from './drivers/codex.js';
 import { PiDriver } from './drivers/pi.js';
 import { listHarnessFiles, loadHarnessFile } from './harness/markdown.js';
 import { HarnessRegistry } from './harness/registry.js';
+import { PackManager, type PackInfo } from './packs/manager.js';
 import { LocalSandboxProvider } from './sandbox/local.js';
 import { FairScheduler, QueueFullError, QueueTimeoutError } from './scheduler/scheduler.js';
 import { SessionManager } from './session/manager.js';
@@ -71,6 +72,7 @@ export interface AgentboxOptions {
  */
 export class Agentbox {
   private readonly registry = new HarnessRegistry();
+  private readonly baseDir: string;
   private readonly sessions: SessionManager;
   private readonly scheduler: FairScheduler;
   private readonly drivers: Map<AgentBackend, AgentDriver>;
@@ -87,6 +89,7 @@ export class Agentbox {
 
   constructor(opts: AgentboxOptions = {}) {
     const baseDir = path.resolve(opts.baseDir ?? '.agentbox');
+    this.baseDir = baseDir;
     const providers = new Map<SandboxKind, SandboxProvider>();
     providers.set('local', new LocalSandboxProvider(path.join(baseDir, 'sessions')));
     for (const provider of opts.sandboxProviders ?? []) {
@@ -119,6 +122,21 @@ export class Agentbox {
 
   harnesses(): HarnessSpec[] {
     return this.registry.list();
+  }
+
+  /**
+   * Loads every installed harness pack from a packs directory (default
+   * <baseDir>/packs — populated by `agentbox add` or PackManager.install).
+   * Packs load in name order; later packs override same-named harnesses.
+   */
+  async loadHarnessPacks(opts: { dir?: string; watch?: boolean } = {}): Promise<PackInfo[]> {
+    const packsDir = opts.dir ?? path.join(this.baseDir, 'packs');
+    const manager = new PackManager(packsDir);
+    const packs = await manager.list();
+    for (const pack of packs) {
+      await this.loadHarnessDir(pack.harnessDir, { watch: opts.watch });
+    }
+    return packs;
   }
 
   /**

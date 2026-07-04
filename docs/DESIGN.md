@@ -109,7 +109,7 @@ Task types are unbounded, so the framework does not try to ship them. The core o
 
 1. **Markdown (the 80% case)** — the authoring format. A harness file is skill-shaped: YAML frontmatter maps 1:1 onto `HarnessSpec` fields, the body becomes `systemPrompt`, and `name` defaults to the file basename. `box.loadHarnessDir(dir, { watch: true })` registers every `*.md` in a directory and hot-reloads on change: edits re-register, deletions unregister, and a mid-edit broken save keeps the previous registration in place. One markdown file = one task type.
 2. **TypeScript `defineHarness` (the 20% escape hatch)** — `HarnessSpec` is the intermediate representation both layers produce. Anything declaration cannot express — custom drivers, dynamic tool policies, conditional workspace seeding — is written in code against the same spec.
-3. **Harness packs (roadmap)** — directories of markdown harnesses distributed via npm/git and installed into a deployment, the way skill marketplaces work.
+3. **Harness packs (v0.5)** — directories of markdown harnesses distributed via git or shared as local folders, the way skill marketplaces work. `agentbox add <git-url|dir>` installs a pack into `.agentbox/packs` (staged and validated first, so a broken pack never lands), an optional `agentbox-pack.json` manifest carries name/version/description and the harness subdirectory, and `box.loadHarnessPacks()` registers every installed pack at boot — in name order, later packs overriding same-named harnesses. `agentbox list` / `agentbox remove` manage the installation.
 
 The direction is deliberately one-way: markdown compiles down to the spec. There is no code→markdown converter — code expresses functions and conditionals that markdown cannot, so such a conversion would be lossy and the converter itself a maintenance sink.
 
@@ -161,5 +161,6 @@ Pre-stream failures return proper status codes (404 unknown harness, 500 otherwi
 - **v0.2 (shipped)** — markdown harness authoring (`loadHarnessDir`) with hot reload
 - **v0.3 (shipped)** — container `SandboxProvider` (workspace volume = session, ephemeral execution containers per run), run cancellation (`Agentbox.cancel`, `DELETE /v1/runs/{id}`)
 - **v0.4 (shipped)** — queue backpressure + queue timeout + per-user concurrency caps, per-harness env allowlists, workspace quotas, retry policies, lifecycle hooks, runtime metrics, graceful drain, MCP server injection for the claude backend
-- **v0.5** — harness packs (npm/git distribution of markdown harness directories), artifact store integration (S3, …), pi programmatic tool registration, MCP injection for the remaining backends
-- **v0.6** — warm session pools (predictive pre-warming), snapshot/restore-style fast session creation, multi-node scheduling (session→node affinity)
+- **v0.5 (shipped)** — harness packs: git/local-dir distribution of markdown harness directories, `agentbox add/list/remove` CLI, `loadHarnessPacks()` runtime loading
+- **v0.6** — artifact store integration (S3, …), pi programmatic tool registration, MCP injection for the remaining backends, npm-registry pack sources
+- **v0.7** — warm session pools (predictive pre-warming), snapshot/restore-style fast session creation, multi-node scheduling (session→node affinity)

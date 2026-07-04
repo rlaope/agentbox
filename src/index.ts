@@ -18,3 +18,4 @@ export { ClaudeDriver } from './drivers/claude.js';
 export { CodexDriver } from './drivers/codex.js';
 export { PiDriver } from './drivers/pi.js';
 export { createHttpServer } from './server/http.js';
+export { PackManager, isGitSource, type InstallOptions, type PackInfo, type PackManifest } from './packs/manager.js';

@@ -99,6 +99,22 @@ await box.loadHarnessDir('./harnesses', { watch: true });
 
 With `watch: true` the runtime hot-reloads: edits re-register, deletions unregister, and a mid-edit broken save keeps the previous registration in place. `name` defaults to the file basename.
 
+## Harness packs
+
+Harness directories travel as packs — a git repo or local folder of `*.md` harnesses with an optional `agentbox-pack.json` manifest (`name`, `version`, `description`, `harnesses` subdir):
+
+```sh
+npx agentbox add https://github.com/acme/office-pack   # or a local directory
+npx agentbox list
+npx agentbox remove office-pack
+```
+
+Packs install into `.agentbox/packs` (staged and validated first — a pack with broken harness files is rejected before it lands) and the runtime picks them up at boot:
+
+```ts
+await box.loadHarnessPacks(); // registers every installed pack
+```
+
 ## Container isolation
 
 When process-level isolation is not enough, plug in the docker-based provider and opt harnesses in with `sandbox: 'container'`. The workspace stays a host directory (volume = session); each run executes in an ephemeral `docker run --rm` container with the workspace bind-mounted, and a per-session home keeps backend resume state warm across containers:
@@ -130,7 +146,7 @@ Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only.
 
 ## Status
 
-v0.4 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade), markdown harness authoring with hot reload, docker-based container isolation, run cancellation, and an operations layer: backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection, graceful drain. Harness packs and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#11-roadmap).
+v0.5 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade), markdown harness authoring with hot reload, docker-based container isolation, run cancellation, an operations layer (backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection, graceful drain), and harness packs with an `agentbox add/list/remove` CLI. Artifact stores and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#11-roadmap).
 
 ## Contributing
 
