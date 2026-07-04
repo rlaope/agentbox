@@ -1,6 +1,9 @@
 {
-  "name": "agentbox",
+  "name": "@rlaope/agentbox",
   "version": "1.0.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "description": "The AI Agent Framework — sandboxed multi-agent orchestration, high-throughput stateful agents, modular agent session manager & runtime for pi / codex / claude",
   "license": "MIT",
@@ -30,7 +33,7 @@
     "node": ">=20"
   },
   "bin": {
-    "agentbox": "./dist/cli.js"
+    "agentbox": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

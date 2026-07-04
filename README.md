@@ -37,10 +37,16 @@ agentbox makes these four the core contract of the framework.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture.
 
+## Install
+
+```sh
+npm install @rlaope/agentbox
+```
+
 ## Usage
 
 ```ts
-import { Agentbox, defineHarness } from 'agentbox';
+import { Agentbox, defineHarness } from '@rlaope/agentbox';
 
 const pptGenerate = defineHarness({
   name: 'ppt-generate',
@@ -122,7 +128,7 @@ await box.loadHarnessPacks(); // registers every installed pack
 When process-level isolation is not enough, plug in the docker-based provider and opt harnesses in with `sandbox: 'container'`. The workspace stays a host directory (volume = session); each run executes in an ephemeral `docker run --rm` container with the workspace bind-mounted, and a per-session home keeps backend resume state warm across containers:
 
 ```ts
-import { Agentbox, ContainerSandboxProvider } from 'agentbox';
+import { Agentbox, ContainerSandboxProvider } from '@rlaope/agentbox';
 
 const box = new Agentbox({
   sandboxProviders: [
@@ -150,7 +156,7 @@ createHttpServer(box, {
 Constrain container network reach to a domain allowlist:
 
 ```ts
-import { startEgressProxy, ContainerSandboxProvider } from 'agentbox';
+import { startEgressProxy, ContainerSandboxProvider } from '@rlaope/agentbox';
 
 const proxy = await startEgressProxy({ allowedDomains: ['api.anthropic.com', '*.npmjs.org'] });
 new ContainerSandboxProvider('.agentbox/sessions', {
@@ -173,7 +179,7 @@ await box.snapshots.create('deck-env',
 For multiple nodes, each agentbox instance stays single-node and a gateway pins sessions to their home node by consistent hash — SSE streams proxy through, lookups fan out, stats aggregate:
 
 ```ts
-import { createGatewayServer } from 'agentbox';
+import { createGatewayServer } from '@rlaope/agentbox';
 
 createGatewayServer(
   [
