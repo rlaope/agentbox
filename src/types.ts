@@ -93,12 +93,23 @@ export interface BackendSessionState {
   resumeId?: string;
 }
 
+export interface CommandSpec {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
 export interface Sandbox {
   readonly kind: SandboxKind;
   /** Absolute workspace root. Drivers must operate only inside it. */
   readonly root: string;
   writeFile(relPath: string, content: string | Uint8Array): Promise<void>;
   collect(globs: string[]): Promise<Artifact[]>;
+  /**
+   * Adapts a host command invocation to run inside the sandbox boundary
+   * (identity for the local sandbox, `docker run ...` for containers).
+   */
+  wrapCommand(spec: CommandSpec): CommandSpec;
   destroy(): Promise<void>;
 }
 

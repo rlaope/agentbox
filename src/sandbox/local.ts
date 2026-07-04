@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { Artifact, Sandbox, SandboxProvider, WorkspaceSpec } from '../types.js';
+import type { Artifact, CommandSpec, Sandbox, SandboxKind, SandboxProvider, WorkspaceSpec } from '../types.js';
 import { globToRegExp, matchesAny } from '../util/glob.js';
 
-const SKIP_DIRS = new Set(['node_modules', '.git', '__pycache__']);
+const SKIP_DIRS = new Set(['node_modules', '.git', '__pycache__', '.agentbox-home']);
 
 /**
  * Process-level isolation sandbox. Each session gets a dedicated workspace
@@ -12,9 +12,13 @@ const SKIP_DIRS = new Set(['node_modules', '.git', '__pycache__']);
  * behind the SandboxProvider interface instead.
  */
 export class LocalSandbox implements Sandbox {
-  readonly kind = 'local' as const;
+  readonly kind: SandboxKind = 'local';
 
   constructor(readonly root: string) {}
+
+  wrapCommand(spec: CommandSpec): CommandSpec {
+    return spec;
+  }
 
   private resolveInside(relPath: string): string {
     const abs = path.resolve(this.root, relPath);

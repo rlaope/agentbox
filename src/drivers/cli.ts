@@ -1,12 +1,8 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
-import type { AgentBackend, AgentDriver, DriverContext, DriverOutcome, RunEvent } from '../types.js';
+import type { AgentBackend, AgentDriver, CommandSpec, DriverContext, DriverOutcome, RunEvent } from '../types.js';
 
-export interface CliInvocation {
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-}
+export type CliInvocation = CommandSpec;
 
 /** Parse state for a single run. Driver instances are shared and stateless. */
 export interface CliParseState {
@@ -47,7 +43,9 @@ export abstract class CliDriver implements AgentDriver {
   ): void;
 
   async run(ctx: DriverContext, emit: (event: RunEvent) => void): Promise<DriverOutcome> {
-    const inv = this.invocation(ctx);
+    // The sandbox decides how the command crosses its boundary
+    // (identity for local, `docker run ...` for containers).
+    const inv = ctx.sandbox.wrapCommand(this.invocation(ctx));
     const timeoutMs = ctx.harness.limits?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     return await new Promise<DriverOutcome>((resolve) => {

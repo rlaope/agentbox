@@ -48,6 +48,7 @@ export class Agentbox {
   private readonly watchers: FSWatcher[] = [];
   /** markdown file absolute path → registered harness name */
   private readonly harnessFiles = new Map<string, string>();
+  private readonly activeRuns = new Map<string, AbortController>();
 
   constructor(opts: AgentboxOptions = {}) {
     const baseDir = path.resolve(opts.baseDir ?? '.agentbox');
@@ -146,23 +147,33 @@ export class Agentbox {
     const startedAt = Date.now();
     const session = await this.sessions.acquire(request.session, harness.sandbox ?? 'local', harness.workspace);
     const abort = new AbortController();
+    this.activeRuns.set(runId, abort);
     onEvent({ type: 'run:start', runId, sessionId: session.id, harness: harness.name });
 
-    const outcome = await this.scheduler.schedule(request.session.userId, () =>
-      session.runExclusive(() =>
-        driver.run(
-          {
-            runId,
-            harness,
-            prompt: request.prompt,
-            sandbox: session.sandbox,
-            state: session.stateFor(harness.backend),
-            signal: abort.signal,
-          },
-          onEvent,
-        ),
-      ),
-    );
+    let outcome;
+    try {
+      outcome = await this.scheduler.schedule(request.session.userId, () =>
+        session.runExclusive(async () => {
+          // Cancelled while queued: skip the driver entirely.
+          if (abort.signal.aborted) {
+            return { status: 'cancelled' as const, finalText: '' };
+          }
+          return driver.run(
+            {
+              runId,
+              harness,
+              prompt: request.prompt,
+              sandbox: session.sandbox,
+              state: session.stateFor(harness.backend),
+              signal: abort.signal,
+            },
+            onEvent,
+          );
+        }),
+      );
+    } finally {
+      this.activeRuns.delete(runId);
+    }
 
     const artifacts = harness.artifacts?.globs?.length
       ? await session.sandbox.collect(harness.artifacts.globs)
@@ -182,6 +193,18 @@ export class Agentbox {
       onEvent({ type: 'run:error', error: outcome.error ?? outcome.status, result });
     }
     return result;
+  }
+
+  /**
+   * Cancels a run by id (obtained from the run:start event). A running
+   * driver is killed; a queued run is dropped before it ever spawns.
+   * Returns false when the run is unknown or already finished.
+   */
+  cancel(runId: string): boolean {
+    const abort = this.activeRuns.get(runId);
+    if (!abort) return false;
+    abort.abort();
+    return true;
   }
 
   get stats(): { sessions: number; runningRuns: number; queuedRuns: number } {

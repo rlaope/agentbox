@@ -66,7 +66,9 @@ A container per request is overkill, so the unit of isolation is **a session = o
 - Backends enforce a second layer themselves: codex via `--sandbox workspace-write`, claude via the tool allowlist.
 
 ### Sandbox provider abstraction
-The `SandboxProvider` interface (`create(id, spec) → Sandbox`) hides the isolation implementation. v0.1 ships `local` only (same host, directory isolation). When a stronger trust boundary is needed, a container provider (per-session volume + pooled execution containers) or a microVM provider plugs in behind the same interface, and a harness opts in with `sandbox: 'container'`. The roadmap direction is **workspace (volume) owned by the session, execution environment leased from a pool** — not one always-on container per session.
+The `SandboxProvider` interface (`create(id, spec) → Sandbox`) hides the isolation implementation, and `Sandbox.wrapCommand` decides how a driver's CLI invocation crosses the boundary (identity for `local`, `docker run ...` for containers). A harness opts in with `sandbox: 'container'`.
+
+`ContainerSandboxProvider` (v0.3) implements **workspace owned by the session, execution environment leased per run** — not one always-on container per session. The workspace stays a host directory bind-mounted into an ephemeral `docker run --rm` container, so seeding and artifact collection are identical to the local sandbox. A per-session home directory (`.agentbox-home`) is mounted as the container HOME so backend resume state survives across ephemeral containers. Image, runtime (docker/podman), network mode, env passthrough, and extra `docker run` args (resource limits, seccomp) are provider options. A microVM provider can plug in behind the same interface later.
 
 ## 5. Throughput strategy
 
@@ -120,6 +122,7 @@ const result = await box.run(
 
 ### HTTP facade
 - `POST /v1/runs` — body `{ session: { userId, goalId }, harness, prompt }`; response is an SSE event stream
+- `DELETE /v1/runs/{runId}` — cancel a run (id from the `run:start` event); kills a running driver, drops a queued run before it spawns
 - `GET /v1/harnesses` — registered harness list
 - `GET /v1/stats` — session count / running runs / queued runs
 
@@ -132,6 +135,6 @@ const result = await box.run(
 ## 11. Roadmap
 
 - **v0.2 (shipped)** — markdown harness authoring (`loadHarnessDir`) with hot reload
-- **v0.3** — container `SandboxProvider` (volume = session, pooled execution containers), run cancellation API, artifact store integration (S3, …)
-- **v0.4** — harness packs (npm/git distribution of markdown harness directories), pi programmatic tool registration, MCP server injection (`tools.mcpServers`) across all backends
+- **v0.3 (shipped)** — container `SandboxProvider` (workspace volume = session, ephemeral execution containers per run), run cancellation (`Agentbox.cancel`, `DELETE /v1/runs/{id}`)
+- **v0.4** — harness packs (npm/git distribution of markdown harness directories), artifact store integration (S3, …), pi programmatic tool registration, MCP server injection (`tools.mcpServers`) across all backends
 - **v0.5** — metrics (run latency / tokens / failure rate), warm session pools (predictive pre-warming), multi-node scheduling (session→node affinity)

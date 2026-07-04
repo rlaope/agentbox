@@ -1,6 +1,6 @@
 {
   "name": "agentbox",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "The AI Agent Framework — sandboxed multi-agent orchestration, high-throughput stateful agents, modular agent session manager & runtime for pi / codex / claude",
   "license": "MIT",

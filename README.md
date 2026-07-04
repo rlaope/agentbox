@@ -98,6 +98,25 @@ await box.loadHarnessDir('./harnesses', { watch: true });
 
 With `watch: true` the runtime hot-reloads: edits re-register, deletions unregister, and a mid-edit broken save keeps the previous registration in place. `name` defaults to the file basename.
 
+## Container isolation
+
+When process-level isolation is not enough, plug in the docker-based provider and opt harnesses in with `sandbox: 'container'`. The workspace stays a host directory (volume = session); each run executes in an ephemeral `docker run --rm` container with the workspace bind-mounted, and a per-session home keeps backend resume state warm across containers:
+
+```ts
+import { Agentbox, ContainerSandboxProvider } from 'agentbox';
+
+const box = new Agentbox({
+  sandboxProviders: [
+    new ContainerSandboxProvider('.agentbox/sessions', {
+      image: 'my-agent-runner:latest', // image with the agent CLIs installed
+      extraArgs: ['--memory', '2g', '--cpus', '2'],
+    }),
+  ],
+});
+```
+
+Runs can be cancelled mid-flight — `box.cancel(runId)` in the SDK, `DELETE /v1/runs/{runId}` over HTTP (the id arrives in the `run:start` event). A running driver is killed; a queued run is dropped before it ever spawns.
+
 ## Development
 
 ```sh
@@ -110,7 +129,7 @@ Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only.
 
 ## Status
 
-v0.2 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade) plus markdown harness authoring with hot reload. Container provider and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#11-roadmap).
+v0.3 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade), markdown harness authoring with hot reload, docker-based container isolation, and run cancellation. Harness packs and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#11-roadmap).
 
 ## Contributing
 

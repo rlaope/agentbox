@@ -4,9 +4,10 @@ import type { RunRequest } from '../types.js';
 
 /**
  * Minimal HTTP facade.
- *  - GET  /v1/harnesses : registered harness list
- *  - GET  /v1/stats     : session/queue status
- *  - POST /v1/runs      : execute a run, streaming events over SSE
+ *  - GET    /v1/harnesses   : registered harness list
+ *  - GET    /v1/stats       : session/queue status
+ *  - POST   /v1/runs        : execute a run, streaming events over SSE
+ *  - DELETE /v1/runs/{id}   : cancel a running or queued run
  */
 export function createHttpServer(box: Agentbox): http.Server {
   return http.createServer(async (req, res) => {
@@ -24,6 +25,11 @@ export function createHttpServer(box: Agentbox): http.Server {
       }
       if (req.method === 'POST' && req.url === '/v1/runs') {
         return await handleRun(box, req, res);
+      }
+      if (req.method === 'DELETE' && req.url?.startsWith('/v1/runs/')) {
+        const runId = decodeURIComponent(req.url.slice('/v1/runs/'.length));
+        const cancelled = box.cancel(runId);
+        return sendJson(res, cancelled ? 200 : 404, cancelled ? { cancelled: true } : { error: 'run not found' });
       }
       sendJson(res, 404, { error: 'not found' });
     } catch (err) {

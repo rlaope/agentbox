@@ -12,6 +12,7 @@ export { parseSimpleYaml } from './harness/yaml.js';
 export { Session, SessionManager, sessionIdOf, type SessionManagerOptions } from './session/manager.js';
 export { FairScheduler } from './scheduler/scheduler.js';
 export { LocalSandbox, LocalSandboxProvider } from './sandbox/local.js';
+export { ContainerSandbox, ContainerSandboxProvider, type ContainerSandboxOptions } from './sandbox/container.js';
 export { CliDriver, type CliInvocation, type CliParseState } from './drivers/cli.js';
 export { ClaudeDriver } from './drivers/claude.js';
 export { CodexDriver } from './drivers/codex.js';
