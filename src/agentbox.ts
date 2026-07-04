@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { watch, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { ClaudeDriver } from './drivers/claude.js';
 import { CodexDriver } from './drivers/codex.js';
 import { PiDriver } from './drivers/pi.js';
+import { listHarnessFiles, loadHarnessFile } from './harness/markdown.js';
 import { HarnessRegistry } from './harness/registry.js';
 import { LocalSandboxProvider } from './sandbox/local.js';
 import { FairScheduler } from './scheduler/scheduler.js';
@@ -43,6 +45,9 @@ export class Agentbox {
   private readonly sessions: SessionManager;
   private readonly scheduler: FairScheduler;
   private readonly drivers: Map<AgentBackend, AgentDriver>;
+  private readonly watchers: FSWatcher[] = [];
+  /** markdown file absolute path → registered harness name */
+  private readonly harnessFiles = new Map<string, string>();
 
   constructor(opts: AgentboxOptions = {}) {
     const baseDir = path.resolve(opts.baseDir ?? '.agentbox');
@@ -73,6 +78,63 @@ export class Agentbox {
 
   harnesses(): HarnessSpec[] {
     return this.registry.list();
+  }
+
+  /**
+   * Loads all `*.md` harness files in a directory (frontmatter → spec,
+   * body → system prompt). With `watch: true`, file changes are hot-reloaded:
+   * edits re-register, deletions unregister, and parse errors keep the
+   * previous registration in place.
+   */
+  async loadHarnessDir(dir: string, opts: { watch?: boolean } = {}): Promise<HarnessSpec[]> {
+    const absDir = path.resolve(dir);
+    const specs: HarnessSpec[] = [];
+    for (const file of await listHarnessFiles(absDir)) {
+      const spec = await loadHarnessFile(file);
+      this.registry.upsert(spec);
+      this.harnessFiles.set(file, spec.name);
+      specs.push(spec);
+    }
+    if (opts.watch) this.watchHarnessDir(absDir);
+    return specs;
+  }
+
+  private watchHarnessDir(absDir: string): void {
+    const timers = new Map<string, NodeJS.Timeout>();
+    const watcher = watch(absDir, (_event, filename) => {
+      if (!filename || !filename.endsWith('.md')) return;
+      const file = path.join(absDir, filename);
+      clearTimeout(timers.get(file));
+      timers.set(
+        file,
+        setTimeout(() => {
+          timers.delete(file);
+          void this.reloadHarnessFile(file);
+        }, 50),
+      );
+    });
+    watcher.unref?.();
+    this.watchers.push(watcher);
+  }
+
+  private async reloadHarnessFile(file: string): Promise<void> {
+    try {
+      const spec = await loadHarnessFile(file);
+      const previous = this.harnessFiles.get(file);
+      if (previous && previous !== spec.name) this.registry.unregister(previous);
+      this.registry.upsert(spec);
+      this.harnessFiles.set(file, spec.name);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        const previous = this.harnessFiles.get(file);
+        if (previous) {
+          this.registry.unregister(previous);
+          this.harnessFiles.delete(file);
+        }
+      }
+      // Parse errors keep the previous registration so a mid-edit save cannot
+      // knock a harness out of a running server.
+    }
   }
 
   async run(request: RunRequest, onEvent: (event: RunEvent) => void = () => {}): Promise<RunResult> {
@@ -131,6 +193,8 @@ export class Agentbox {
   }
 
   async close(): Promise<void> {
+    for (const watcher of this.watchers) watcher.close();
+    this.watchers.length = 0;
     await this.sessions.close();
   }
 }

@@ -12,22 +12,21 @@ export class HarnessRegistry {
   private readonly specs = new Map<string, HarnessSpec>();
 
   register(spec: HarnessSpec): void {
-    if (!NAME_RE.test(spec.name)) {
-      throw new Error(`invalid harness name "${spec.name}" (expected ${NAME_RE})`);
-    }
-    if (!BACKENDS.has(spec.backend)) {
-      throw new Error(`unknown backend "${spec.backend}" for harness "${spec.name}"`);
-    }
+    this.validate(spec);
     if (this.specs.has(spec.name)) {
       throw new Error(`harness "${spec.name}" is already registered`);
     }
-    if (spec.limits?.timeoutMs !== undefined && spec.limits.timeoutMs <= 0) {
-      throw new Error(`harness "${spec.name}" has non-positive timeoutMs`);
-    }
-    if (spec.limits?.maxTurns !== undefined && spec.limits.maxTurns <= 0) {
-      throw new Error(`harness "${spec.name}" has non-positive maxTurns`);
-    }
     this.specs.set(spec.name, spec);
+  }
+
+  /** Registers or replaces. Used by loaders that reload harness files at runtime. */
+  upsert(spec: HarnessSpec): void {
+    this.validate(spec);
+    this.specs.set(spec.name, spec);
+  }
+
+  unregister(name: string): boolean {
+    return this.specs.delete(name);
   }
 
   get(name: string): HarnessSpec {
@@ -38,5 +37,20 @@ export class HarnessRegistry {
 
   list(): HarnessSpec[] {
     return [...this.specs.values()];
+  }
+
+  private validate(spec: HarnessSpec): void {
+    if (!NAME_RE.test(spec.name)) {
+      throw new Error(`invalid harness name "${spec.name}" (expected ${NAME_RE})`);
+    }
+    if (!BACKENDS.has(spec.backend)) {
+      throw new Error(`unknown backend "${spec.backend}" for harness "${spec.name}"`);
+    }
+    if (spec.limits?.timeoutMs !== undefined && spec.limits.timeoutMs <= 0) {
+      throw new Error(`harness "${spec.name}" has non-positive timeoutMs`);
+    }
+    if (spec.limits?.maxTurns !== undefined && spec.limits.maxTurns <= 0) {
+      throw new Error(`harness "${spec.name}" has non-positive maxTurns`);
+    }
   }
 }

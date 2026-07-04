@@ -87,13 +87,23 @@ A harness declares `tools.allow / tools.deny`; the driver translates them into b
 
 A narrower tool surface (1) cuts the turns an agent wastes exploring, lowering latency and cost, and (2) shrinks the blast radius under prompt injection. `limits.maxTurns` / `limits.timeoutMs` bound runaway runs.
 
-## 7. Event and artifact contract
+## 7. Harness authoring layers
+
+Task types are unbounded, so the framework does not try to ship them. The core owns primitives only (sessions, isolation, scheduling, drivers) and keeps a handful of reference harnesses; everything else comes from the layers below.
+
+1. **Markdown (the 80% case)** — the authoring format. A harness file is skill-shaped: YAML frontmatter maps 1:1 onto `HarnessSpec` fields, the body becomes `systemPrompt`, and `name` defaults to the file basename. `box.loadHarnessDir(dir, { watch: true })` registers every `*.md` in a directory and hot-reloads on change: edits re-register, deletions unregister, and a mid-edit broken save keeps the previous registration in place. One markdown file = one task type.
+2. **TypeScript `defineHarness` (the 20% escape hatch)** — `HarnessSpec` is the intermediate representation both layers produce. Anything declaration cannot express — custom drivers, dynamic tool policies, conditional workspace seeding — is written in code against the same spec.
+3. **Harness packs (roadmap)** — directories of markdown harnesses distributed via npm/git and installed into a deployment, the way skill marketplaces work.
+
+The direction is deliberately one-way: markdown compiles down to the spec. There is no code→markdown converter — code expresses functions and conditionals that markdown cannot, so such a conversion would be lossy and the converter itself a maintenance sink.
+
+## 8. Event and artifact contract
 
 All backend output is normalized into a common `RunEvent` stream: `run:start`, `agent:message`, `agent:thinking`, `tool:call`, `tool:result`, `run:done`, `run:error`. The HTTP facade relays these as SSE, so a SaaS client can render progress without knowing which backend is underneath.
 
 Artifacts are declared as `artifacts.globs` on the harness. After the run ends, matching files are collected from the workspace and returned as `RunResult.artifacts` (relative path, absolute path, size). Serving the files (issuing download URLs etc.) is the responsibility of the SaaS layer outside the framework.
 
-## 8. API
+## 9. API
 
 ### Embedded SDK
 
@@ -113,14 +123,15 @@ const result = await box.run(
 - `GET /v1/harnesses` — registered harness list
 - `GET /v1/stats` — session count / running runs / queued runs
 
-## 9. Assumptions to verify
+## 10. Assumptions to verify
 
 - **pi CLI invocation shape**: the default is `pi -p "<prompt>"`. If the deployed pi version differs, override via `driverOptions.command / args`; the default will be updated once confirmed.
 - **codex `--json` event schema**: experimental, fields may change. The parser is written defensively and ignores unrecognized lines.
 - **claude stream-json**: based on the `system:init / assistant / user / result` message types; re-verify on CLI upgrades.
 
-## 10. Roadmap
+## 11. Roadmap
 
-- **v0.2** — container `SandboxProvider` (volume = session, pooled execution containers), run cancellation API, artifact store integration (S3, …)
-- **v0.3** — pi programmatic tool registration (custom tools declared on the harness), MCP server injection (`tools.mcpServers`) across all backends
-- **v0.4** — metrics (run latency / tokens / failure rate), warm session pools (predictive pre-warming), multi-node scheduling (session→node affinity)
+- **v0.2 (shipped)** — markdown harness authoring (`loadHarnessDir`) with hot reload
+- **v0.3** — container `SandboxProvider` (volume = session, pooled execution containers), run cancellation API, artifact store integration (S3, …)
+- **v0.4** — harness packs (npm/git distribution of markdown harness directories), pi programmatic tool registration, MCP server injection (`tools.mcpServers`) across all backends
+- **v0.5** — metrics (run latency / tokens / failure rate), warm session pools (predictive pre-warming), multi-node scheduling (session→node affinity)

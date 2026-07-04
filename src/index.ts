@@ -1,6 +1,14 @@
 export * from './types.js';
 export { Agentbox, type AgentboxOptions } from './agentbox.js';
 export { defineHarness, HarnessRegistry } from './harness/registry.js';
+export {
+  harnessFromMarkdown,
+  listHarnessFiles,
+  loadHarnessDir,
+  loadHarnessFile,
+  type HarnessMarkdownOptions,
+} from './harness/markdown.js';
+export { parseSimpleYaml } from './harness/yaml.js';
 export { Session, SessionManager, sessionIdOf, type SessionManagerOptions } from './session/manager.js';
 export { FairScheduler } from './scheduler/scheduler.js';
 export { LocalSandbox, LocalSandboxProvider } from './sandbox/local.js';

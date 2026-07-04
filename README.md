@@ -74,6 +74,30 @@ curl -N localhost:8787/v1/runs -d '{
 
 Events stream back as SSE (`run:start`, `agent:message`, `tool:call`, `run:done`, …) so your client can render progress without knowing which backend is underneath.
 
+## Markdown harnesses
+
+TypeScript `defineHarness` is the escape hatch; markdown is the authoring format for the common case. A harness file is skill-shaped — YAML frontmatter for the spec, body as the system prompt:
+
+```markdown
+---
+name: ppt-generate
+backend: claude
+tools: { allow: [Read, Write, "Bash(node:*)"] }
+artifacts: [out/**/*.pptx]
+limits: { maxTurns: 30, timeoutMs: 480000 }
+---
+You are a presentation-generation harness.
+Produce exactly one file: out/deck.pptx.
+```
+
+Load a directory of them at boot — one markdown file is one task type:
+
+```ts
+await box.loadHarnessDir('./harnesses', { watch: true });
+```
+
+With `watch: true` the runtime hot-reloads: edits re-register, deletions unregister, and a mid-edit broken save keeps the previous registration in place. `name` defaults to the file basename.
+
 ## Development
 
 ```sh
@@ -86,7 +110,7 @@ Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only.
 
 ## Status
 
-v0.1 — design + working core skeleton: local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade, and three example harnesses. Container provider and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#10-roadmap).
+v0.2 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade) plus markdown harness authoring with hot reload. Container provider and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#11-roadmap).
 
 ## Contributing
 

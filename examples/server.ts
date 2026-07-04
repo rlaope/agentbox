@@ -1,5 +1,7 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Agentbox, createHttpServer } from '../src/index.js';
-import { bashGenerate, docGenerate, pptGenerate } from './harnesses.js';
+import { bashGenerate } from './harnesses.js';
 
 /**
  * Boot the demo server:
@@ -13,7 +15,13 @@ import { bashGenerate, docGenerate, pptGenerate } from './harnesses.js';
  *   }'
  */
 const box = new Agentbox({ maxConcurrentRuns: 4 });
-box.register(pptGenerate).register(bashGenerate).register(docGenerate);
+
+// Code-level harness (escape hatch).
+box.register(bashGenerate);
+
+// Markdown harnesses, hot-reloaded on edit while the server runs.
+const harnessDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'harnesses');
+await box.loadHarnessDir(harnessDir, { watch: true });
 
 const port = Number(process.env.PORT ?? 8787);
 createHttpServer(box).listen(port, () => {
