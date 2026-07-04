@@ -99,6 +99,8 @@ export type RunStatus = 'succeeded' | 'failed' | 'cancelled' | 'timeout';
 
 export interface RunResult {
   runId: string;
+  harness: string;
+  sessionId: string;
   status: RunStatus;
   finalText: string;
   artifacts: Artifact[];

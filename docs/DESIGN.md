@@ -82,7 +82,7 @@ The `SandboxProvider` interface (`create(id, spec) → Sandbox`) hides the isola
 
 ## 5. Throughput strategy
 
-1. **Session reuse (stateful warm sessions)** — requests for the same `(userId, goalId)` route to the same session. The workspace persists, so installed dependencies and intermediate outputs are reused, and the driver stores the backend resume id (claude `--resume`, codex `exec resume`) on the session, eliminating conversation-context rebuild cost.
+1. **Session reuse (stateful warm sessions)** — requests for the same `(userId, goalId)` route to the same session. The workspace persists, so installed dependencies and intermediate outputs are reused, and the driver stores the backend resume id (claude `--resume`, codex `exec resume`) on the session, eliminating conversation-context rebuild cost. Resume state is persisted into the workspace (`.agentbox-home/session-state.json`) after every run, so sessions come back warm across server restarts, and `prewarmSessions()` pre-creates workspaces for known-active users ahead of their first request.
 2. **Global concurrency cap + fairness** — `FairScheduler` bounds the number of concurrent runs server-wide (default 4), round-robins across userId lanes so one user's burst cannot starve others, and optionally caps concurrent runs per user (`maxConcurrentRunsPerUser`) so a single tenant cannot hold every slot.
 3. **Bounded queueing (backpressure)** — `maxQueuedRuns` fails excess submissions fast with a `queue is full` result instead of building an unbounded backlog, and `queueTimeoutMs` fails runs that wait too long. Backpressure only applies to jobs that would actually wait; a job with a free slot always runs.
 4. **Serialization within a session** — runs arriving concurrently for one session execute in arrival order. This structurally prevents file-area contention and resume-id races. Different sessions run in parallel.
@@ -144,9 +144,13 @@ const result = await box.run(
 
 ### HTTP facade
 - `POST /v1/runs` — body `{ session: { userId, goalId }, harness, prompt }`; response is an SSE event stream
+- `GET /v1/runs` — recent finished runs, newest first (in-memory ring, `historyLimit` default 500)
+- `GET /v1/runs/{runId}` — one finished run; lets clients recover results after a dropped SSE stream
 - `DELETE /v1/runs/{runId}` — cancel a run (id from the `run:start` event); kills a running driver, drops a queued run before it spawns
 - `GET /v1/harnesses` — registered harness list
 - `GET /v1/stats` — sessions, running/queued/active runs, totals by status, average duration
+
+Auth: `createHttpServer(box, { apiKeys: [...] })` requires `Authorization: Bearer <key>` or `x-api-key` on every endpoint (401 otherwise). Without configured keys the facade is open and must sit behind a trusted network boundary.
 
 Pre-stream failures return proper status codes (404 unknown harness, 500 otherwise); queue overflow and queue timeout surface as terminal `run:error` events with a failed result rather than thrown errors.
 
@@ -158,6 +162,7 @@ Drivers were verified against real CLIs (claude 2.1.201, codex-cli 0.140.0, pi) 
 - **codex** — end-to-end verified: `exec --json` event parsing (command_execution, file_change), artifact collection, and warm resume via `exec resume`. Finding: `--cd`/`--sandbox` are `exec`-only flags; on resume the sandbox mode rides on a `-c sandbox_mode=...` override and the spawn cwd stands in for `--cd`.
 - **pi** — flag surface verified against the installed CLI (`-p`, `--append-system-prompt`, `--tools`/`--no-tools`, `--model`/`--provider`, `--session-dir`/`--continue`, `-e`/`--skill`). A full run needs a provider API key, which this environment does not have; the invocation is covered by unit tests.
 - **codex `--json` schema** remains experimental upstream; the parser stays defensive and ignores unrecognized lines.
+- **container sandbox** — verified against a real docker daemon (v0.7): a run executed inside an ephemeral `alpine:3` container through the full framework path, with the workspace bind-mount, the persistent `HOME` mount, and host-side artifact collection all confirmed.
 
 ## 11. Roadmap
 
@@ -166,4 +171,5 @@ Drivers were verified against real CLIs (claude 2.1.201, codex-cli 0.140.0, pi) 
 - **v0.4 (shipped)** — queue backpressure + queue timeout + per-user concurrency caps, per-harness env allowlists, workspace quotas, retry policies, lifecycle hooks, runtime metrics, graceful drain, MCP server injection for the claude backend
 - **v0.5 (shipped)** — harness packs: git/local-dir distribution of markdown harness directories, `agentbox add/list/remove` CLI, `loadHarnessPacks()` runtime loading
 - **v0.6 (shipped)** — real-CLI verification of the claude/codex drivers (including warm resume), pi driver upgraded to the verified flag surface (`--tools` allowlist, extensions), MCP injection for codex, artifact stores (local archive + dependency-free S3), npm/tarball pack sources
-- **v0.7** — warm session pools (predictive pre-warming), snapshot/restore-style fast session creation, multi-node scheduling (session→node affinity), HTTP facade authentication
+- **v0.7 (shipped)** — HTTP facade auth (API keys), run history (`GET /v1/runs[/{id}]`), resume-state persistence across restarts, session pre-warming (`prewarmSessions`), throughput benchmark (`bench/throughput.mts`), real-docker container verification
+- **v0.8** — multi-node scale-out. Design direction: agentbox instances stay single-node; a load balancer routes by consistent hash of `(userId, goalId)` so a session sticks to one node (workspace and resume state are node-local), with the artifact store as the durable cross-node layer. A shared queue (Redis/NATS) is only needed if per-node fairness proves insufficient. Plus snapshot/restore-style fast session creation.

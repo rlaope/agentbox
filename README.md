@@ -136,6 +136,16 @@ const box = new Agentbox({
 
 Runs can be cancelled mid-flight — `box.cancel(runId)` in the SDK, `DELETE /v1/runs/{runId}` over HTTP (the id arrives in the `run:start` event). A running driver is killed; a queued run is dropped before it ever spawns.
 
+## Benchmarks
+
+Framework overhead only — drivers are simulated, so this measures agentbox's scheduling, session management, state persistence, and artifact collection, not LLM latency. Reproduce with `npx tsx bench/throughput.mts` (numbers below: Node 22, Apple M5).
+
+| Scenario | Result |
+|---|---|
+| Pure overhead (0ms driver, 200 runs, 20 sessions, concurrency 8) | 8,514 runs/s; p50 14ms / p95 22ms per run including queue wait |
+| Simulated agent (300ms driver, 200 runs, 40 sessions, concurrency 16) | 43.8 runs/s — 82% of the theoretical 53.3 runs/s ceiling |
+| Burst fairness (1 heavy user's serialized session + 9 light users) | 100 runs, 0 failed, light users never starved |
+
 ## Development
 
 ```sh
@@ -148,7 +158,7 @@ Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only.
 
 ## Status
 
-v0.6 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade), markdown harness authoring with hot reload, docker-based container isolation, run cancellation, an operations layer (backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection for claude and codex, graceful drain), harness packs (git/npm/tarball/local) with an `agentbox add/list/remove` CLI, and artifact stores. The claude and codex drivers are verified end-to-end against the real CLIs, warm resume included; see the [roadmap](docs/DESIGN.md#11-roadmap) for what's next.
+v0.7 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade with API-key auth and run history), markdown harness authoring with hot reload, docker-based container isolation, run cancellation, an operations layer (backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection for claude and codex, graceful drain), harness packs (git/npm/tarball/local) with an `agentbox add/list/remove` CLI, artifact stores, resume-state persistence across restarts, and session pre-warming. The claude and codex drivers are verified end-to-end against the real CLIs (warm resume included) and the container sandbox against a real docker daemon; see the [roadmap](docs/DESIGN.md#11-roadmap) for what's next.
 
 ## Contributing
 

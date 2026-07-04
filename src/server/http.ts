@@ -2,16 +2,33 @@ import http from 'node:http';
 import type { Agentbox } from '../agentbox.js';
 import type { RunRequest } from '../types.js';
 
+export interface HttpServerOptions {
+  /**
+   * Bearer/API keys accepted on every endpoint. When omitted the server is
+   * open — only do that behind a trusted network boundary.
+   */
+  apiKeys?: string[];
+}
+
 /**
  * Minimal HTTP facade.
  *  - GET    /v1/harnesses   : registered harness list
  *  - GET    /v1/stats       : session/queue status
+ *  - GET    /v1/runs        : recent finished runs (newest first)
+ *  - GET    /v1/runs/{id}   : one finished run by id
  *  - POST   /v1/runs        : execute a run, streaming events over SSE
  *  - DELETE /v1/runs/{id}   : cancel a running or queued run
+ *
+ * Auth: pass `apiKeys`; requests must carry `Authorization: Bearer <key>`
+ * or `x-api-key: <key>`.
  */
-export function createHttpServer(box: Agentbox): http.Server {
+export function createHttpServer(box: Agentbox, opts: HttpServerOptions = {}): http.Server {
+  const apiKeys = new Set(opts.apiKeys ?? []);
   return http.createServer(async (req, res) => {
     try {
+      if (apiKeys.size > 0 && !isAuthorized(req, apiKeys)) {
+        return sendJson(res, 401, { error: 'unauthorized' });
+      }
       if (req.method === 'GET' && req.url === '/v1/harnesses') {
         const list = box.harnesses().map((h) => ({
           name: h.name,
@@ -22,6 +39,14 @@ export function createHttpServer(box: Agentbox): http.Server {
       }
       if (req.method === 'GET' && req.url === '/v1/stats') {
         return sendJson(res, 200, box.stats);
+      }
+      if (req.method === 'GET' && req.url === '/v1/runs') {
+        return sendJson(res, 200, box.listRuns());
+      }
+      if (req.method === 'GET' && req.url?.startsWith('/v1/runs/')) {
+        const runId = decodeURIComponent(req.url.slice('/v1/runs/'.length));
+        const run = box.getRun(runId);
+        return sendJson(res, run ? 200 : 404, run ?? { error: 'run not found' });
       }
       if (req.method === 'POST' && req.url === '/v1/runs') {
         return await handleRun(box, req, res);
@@ -94,6 +119,13 @@ function parseRunRequest(body: string): RunRequest | undefined {
     return undefined;
   }
   return { session: { userId, goalId }, harness, prompt };
+}
+
+function isAuthorized(req: http.IncomingMessage, apiKeys: Set<string>): boolean {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith('Bearer ') && apiKeys.has(auth.slice('Bearer '.length))) return true;
+  const headerKey = req.headers['x-api-key'];
+  return typeof headerKey === 'string' && apiKeys.has(headerKey);
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {

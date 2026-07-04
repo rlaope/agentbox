@@ -22,6 +22,8 @@ import type {
   RunStatus,
   SandboxKind,
   SandboxProvider,
+  SessionKey,
+  WorkspaceSpec,
 } from './types.js';
 
 /**
@@ -60,6 +62,8 @@ export interface AgentboxOptions {
     maxSessions?: number;
   };
   hooks?: AgentboxHooks;
+  /** Number of finished RunResults kept for GET /v1/runs lookups. Default 500. */
+  historyLimit?: number;
   /** Uploads collected artifacts to durable storage (S3, local archive, …) */
   artifactStore?: ArtifactStore;
   /** Per-backend driver overrides (test doubles, custom adapters) */
@@ -85,6 +89,9 @@ export class Agentbox {
   private readonly activeRuns = new Map<string, AbortController>();
   private readonly hooks: AgentboxHooks;
   private readonly artifactStore?: ArtifactStore;
+  /** Finished runs, insertion-ordered; oldest evicted past historyLimit. */
+  private readonly history = new Map<string, RunResult>();
+  private readonly historyLimit: number;
   private readonly metrics = {
     totalRuns: 0,
     byStatus: {} as Partial<Record<RunStatus, number>>,
@@ -110,6 +117,7 @@ export class Agentbox {
     });
     this.hooks = opts.hooks ?? {};
     this.artifactStore = opts.artifactStore;
+    this.historyLimit = opts.historyLimit ?? 500;
     this.drivers = new Map<AgentBackend, AgentDriver>([
       ['pi', new PiDriver()],
       ['codex', new CodexDriver()],
@@ -221,9 +229,13 @@ export class Agentbox {
     let outcome: DriverOutcome;
     try {
       outcome = await this.scheduler.schedule(request.session.userId, () =>
-        session.runExclusive(() =>
-          this.runAttempts(runId, request, harness, driver, session, abort.signal, emit),
-        ),
+        session.runExclusive(async () => {
+          const attempt = await this.runAttempts(runId, request, harness, driver, session, abort.signal, emit);
+          // Persist resume state while still holding the session slot, so a
+          // restart resumes warm from the workspace.
+          await session.persistState();
+          return attempt;
+        }),
       );
     } catch (err) {
       // Backpressure surfaces as a failed result, not a thrown error, so the
@@ -267,12 +279,19 @@ export class Agentbox {
 
     const result: RunResult = {
       runId,
+      harness: harness.name,
+      sessionId: session.id,
       status: outcome.status,
       finalText: outcome.finalText,
       artifacts,
       durationMs: Date.now() - startedAt,
       error: outcome.error,
     };
+    this.history.set(runId, result);
+    while (this.history.size > this.historyLimit) {
+      const oldest = this.history.keys().next().value as string;
+      this.history.delete(oldest);
+    }
     this.metrics.totalRuns++;
     this.metrics.byStatus[result.status] = (this.metrics.byStatus[result.status] ?? 0) + 1;
     this.metrics.totalDurationMs += result.durationMs;
@@ -325,6 +344,33 @@ export class Agentbox {
     } catch {
       // Hooks are observability; they must never break a run.
     }
+  }
+
+  /** Finished run by id, from the in-memory history ring. */
+  getRun(runId: string): RunResult | undefined {
+    return this.history.get(runId);
+  }
+
+  /** Finished runs, newest first. */
+  listRuns(limit = 50): RunResult[] {
+    return [...this.history.values()].slice(-limit).reverse();
+  }
+
+  /**
+   * Pre-creates sessions (workspace + seeded files + persisted-state reload)
+   * ahead of the first request, so a known-active user's first run skips
+   * workspace setup. Predictive warm pooling for the session layer.
+   */
+  async prewarmSessions(
+    keys: SessionKey[],
+    opts: { sandbox?: SandboxKind; workspace?: WorkspaceSpec } = {},
+  ): Promise<string[]> {
+    const ids: string[] = [];
+    for (const key of keys) {
+      const session = await this.sessions.acquire(key, opts.sandbox ?? 'local', opts.workspace);
+      ids.push(session.id);
+    }
+    return ids;
   }
 
   /**
