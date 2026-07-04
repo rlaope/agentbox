@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Artifact, CommandSpec, Sandbox, SandboxKind, SandboxProvider, WorkspaceSpec } from '../types.js';
 import { globToRegExp, matchesAny } from '../util/glob.js';
+import { seedWorkspace } from './workspace.js';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '__pycache__', '.agentbox-home']);
 
@@ -96,18 +97,14 @@ export class LocalSandbox implements Sandbox {
 export class LocalSandboxProvider implements SandboxProvider {
   readonly kind = 'local' as const;
 
-  constructor(private readonly baseDir: string) {}
+  constructor(
+    private readonly baseDir: string,
+    private readonly opts: { snapshotsDir?: string } = {},
+  ) {}
 
   async create(id: string, spec?: WorkspaceSpec): Promise<Sandbox> {
     const root = path.resolve(this.baseDir, id);
-    await fs.mkdir(root, { recursive: true });
-    if (spec?.templateDir) {
-      await fs.cp(spec.templateDir, root, { recursive: true });
-    }
-    const sandbox = new LocalSandbox(root);
-    for (const [rel, content] of Object.entries(spec?.seedFiles ?? {})) {
-      await sandbox.writeFile(rel, content);
-    }
-    return sandbox;
+    await seedWorkspace(root, spec, this.opts.snapshotsDir);
+    return new LocalSandbox(root);
   }
 }

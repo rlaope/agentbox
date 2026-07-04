@@ -18,6 +18,11 @@ export interface ToolPolicy {
 }
 
 export interface WorkspaceSpec {
+  /**
+   * Name of a pre-built workspace snapshot to clone from (copy-on-write
+   * where the filesystem supports it). Built via SnapshotManager/box.snapshots.
+   */
+  snapshot?: string;
   /** Template directory copied into the session workspace on creation */
   templateDir?: string;
   /** Relative path → content, written as seed files on workspace creation */

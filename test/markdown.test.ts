@@ -61,7 +61,9 @@ test('name defaults to the file basename', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
+// Generous timeout: test files run in parallel and fs.watch callbacks can
+// lag well past a few seconds when other suites saturate the CPU.
+async function waitFor(check: () => boolean, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (check()) return;
@@ -90,7 +92,7 @@ test('loadHarnessDir registers markdown harnesses and hot-reloads with watch', a
 
   // A broken save must keep the previous registration in place.
   await fs.writeFile(file, '---\nname: demo\nbackend: pi\ntools: [broken\n---\n');
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await new Promise((resolve) => setTimeout(resolve, 500));
   assert.equal(box.harnesses().find((h) => h.name === 'demo')?.description, 'v2');
 
   await fs.rm(file);

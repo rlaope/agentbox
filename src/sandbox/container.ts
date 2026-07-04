@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { CommandSpec, SandboxKind, SandboxProvider, Sandbox, WorkspaceSpec } from '../types.js';
 import { LocalSandbox } from './local.js';
+import { seedWorkspace } from './workspace.js';
 
 /**
  * Docker-based isolation. The workspace stays a host directory (volume =
@@ -14,6 +15,8 @@ import { LocalSandbox } from './local.js';
 export interface ContainerSandboxOptions {
   /** Image the agent CLI runs in. It must have the backend CLIs installed. */
   image: string;
+  /** Directory holding workspace snapshots for workspace.snapshot cloning. */
+  snapshotsDir?: string;
   /** Container runtime binary. Defaults to "docker" (podman-compatible). */
   runtime?: string;
   /** Docker network mode. Defaults to "bridge" — agent CLIs need the model API. */
@@ -93,23 +96,17 @@ export class ContainerSandboxProvider implements SandboxProvider {
       envPassthrough: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
       extraArgs: [],
       persistHome: true,
+      snapshotsDir: opts.snapshotsDir ?? '',
       ...opts,
     };
   }
 
   async create(id: string, spec?: WorkspaceSpec): Promise<Sandbox> {
     const root = path.resolve(this.baseDir, id);
-    await fs.mkdir(root, { recursive: true });
-    if (spec?.templateDir) {
-      await fs.cp(spec.templateDir, root, { recursive: true });
-    }
+    await seedWorkspace(root, spec, this.opts.snapshotsDir || undefined);
     if (this.opts.persistHome) {
       await fs.mkdir(path.join(root, HOME_DIR), { recursive: true });
     }
-    const sandbox = new ContainerSandbox(root, this.opts);
-    for (const [rel, content] of Object.entries(spec?.seedFiles ?? {})) {
-      await sandbox.writeFile(rel, content);
-    }
-    return sandbox;
+    return new ContainerSandbox(root, this.opts);
   }
 }

@@ -8,6 +8,7 @@ import { listHarnessFiles, loadHarnessFile } from './harness/markdown.js';
 import { HarnessRegistry } from './harness/registry.js';
 import { PackManager, type PackInfo } from './packs/manager.js';
 import { LocalSandboxProvider } from './sandbox/local.js';
+import { SnapshotManager } from './sandbox/snapshots.js';
 import { FairScheduler, QueueFullError, QueueTimeoutError } from './scheduler/scheduler.js';
 import { SessionManager } from './session/manager.js';
 import type {
@@ -80,6 +81,8 @@ export interface AgentboxOptions {
 export class Agentbox {
   private readonly registry = new HarnessRegistry();
   private readonly baseDir: string;
+  /** Pre-built workspace snapshots; harnesses opt in via workspace.snapshot. */
+  readonly snapshots: SnapshotManager;
   private readonly sessions: SessionManager;
   private readonly scheduler: FairScheduler;
   private readonly drivers: Map<AgentBackend, AgentDriver>;
@@ -101,8 +104,10 @@ export class Agentbox {
   constructor(opts: AgentboxOptions = {}) {
     const baseDir = path.resolve(opts.baseDir ?? '.agentbox');
     this.baseDir = baseDir;
+    const snapshotsDir = path.join(baseDir, 'snapshots');
+    this.snapshots = new SnapshotManager(snapshotsDir);
     const providers = new Map<SandboxKind, SandboxProvider>();
-    providers.set('local', new LocalSandboxProvider(path.join(baseDir, 'sessions')));
+    providers.set('local', new LocalSandboxProvider(path.join(baseDir, 'sessions'), { snapshotsDir }));
     for (const provider of opts.sandboxProviders ?? []) {
       providers.set(provider.kind, provider);
     }

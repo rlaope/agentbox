@@ -20,4 +20,8 @@ export { PiDriver } from './drivers/pi.js';
 export { createHttpServer, type HttpServerOptions } from './server/http.js';
 export { PackManager, isGitSource, isNpmSource, type InstallOptions, type PackInfo, type PackManifest } from './packs/manager.js';
 export { LocalArtifactStore } from './artifacts/local.js';
+export { SnapshotManager } from './sandbox/snapshots.js';
+export { cloneDir, seedWorkspace } from './sandbox/workspace.js';
+export { ConsistentHashRouter } from './cluster/router.js';
+export { createGatewayServer, type GatewayNode, type GatewayOptions } from './cluster/gateway.js';
 export { S3ArtifactStore, type S3ArtifactStoreOptions } from './artifacts/s3.js';

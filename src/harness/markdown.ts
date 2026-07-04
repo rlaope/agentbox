@@ -192,6 +192,8 @@ function normalizeWorkspace(value: unknown, source: string): WorkspaceSpec | und
   if (value === undefined || value === null) return undefined;
   if (!isRecord(value)) throw new Error(`${source}: "workspace" must be a mapping`);
   const workspace: WorkspaceSpec = {};
+  const snapshot = optionalString(value.snapshot, 'workspace.snapshot', source);
+  if (snapshot) workspace.snapshot = snapshot;
   const templateDir = optionalString(value.templateDir, 'workspace.templateDir', source);
   if (templateDir) workspace.templateDir = templateDir;
   if (value.seedFiles !== undefined) {
