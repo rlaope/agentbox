@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in agentbox does not behave as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: harness
+    attributes:
+      label: Harness spec
+      description: The harness declaration involved, redacted as needed.
+      render: ts
+  - type: input
+    id: backend
+    attributes:
+      label: Backend and CLI version
+      placeholder: "e.g. claude 2.x / codex 0.x / pi x.y"
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Observed RunEvent / RunResult output
+      description: Relevant event stream lines or the final RunResult, if available.
+      render: json
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "e.g. Node 22.1, macOS 15 / Ubuntu 24.04"
+    validations:
+      required: true
