@@ -1,5 +1,5 @@
 export * from './types.js';
-export { Agentbox, type AgentboxOptions } from './agentbox.js';
+export { Agentbox, type AgentboxHooks, type AgentboxOptions, type AgentboxStats } from './agentbox.js';
 export { defineHarness, HarnessRegistry } from './harness/registry.js';
 export {
   harnessFromMarkdown,
@@ -10,7 +10,7 @@ export {
 } from './harness/markdown.js';
 export { parseSimpleYaml } from './harness/yaml.js';
 export { Session, SessionManager, sessionIdOf, type SessionManagerOptions } from './session/manager.js';
-export { FairScheduler } from './scheduler/scheduler.js';
+export { FairScheduler, QueueFullError, QueueTimeoutError, type FairSchedulerOptions } from './scheduler/scheduler.js';
 export { LocalSandbox, LocalSandboxProvider } from './sandbox/local.js';
 export { ContainerSandbox, ContainerSandboxProvider, type ContainerSandboxOptions } from './sandbox/container.js';
 export { CliDriver, type CliInvocation, type CliParseState } from './drivers/cli.js';

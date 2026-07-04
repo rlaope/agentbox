@@ -52,5 +52,11 @@ export class HarnessRegistry {
     if (spec.limits?.maxTurns !== undefined && spec.limits.maxTurns <= 0) {
       throw new Error(`harness "${spec.name}" has non-positive maxTurns`);
     }
+    if (spec.limits?.maxWorkspaceBytes !== undefined && spec.limits.maxWorkspaceBytes <= 0) {
+      throw new Error(`harness "${spec.name}" has non-positive maxWorkspaceBytes`);
+    }
+    if (spec.retry !== undefined && spec.retry.maxAttempts < 1) {
+      throw new Error(`harness "${spec.name}" has retry.maxAttempts < 1`);
+    }
   }
 }

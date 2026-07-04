@@ -68,6 +68,11 @@ export class ContainerSandbox extends LocalSandbox {
     for (const name of o.envPassthrough) {
       args.push('-e', name);
     }
+    // Invocation-scoped env (e.g. harness env allowlists) — values travel via
+    // the docker client process env, `-e NAME` forwards them into the container.
+    for (const name of Object.keys(spec.env ?? {})) {
+      args.push('-e', name);
+    }
     args.push(...o.extraArgs, o.image, spec.command, ...spec.args);
     return { command: o.runtime, args, env: spec.env };
   }

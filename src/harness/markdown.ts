@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { HarnessSpec, SandboxKind, ToolPolicy, WorkspaceSpec } from '../types.js';
+import type { HarnessSpec, McpServerConfig, RetryPolicy, RunStatus, SandboxKind, ToolPolicy, WorkspaceSpec } from '../types.js';
 import { parseSimpleYaml } from './yaml.js';
 
 /**
@@ -62,6 +62,9 @@ export function harnessFromMarkdown(content: string, opts: HarnessMarkdownOption
   if (limits) spec.limits = limits;
   const workspace = normalizeWorkspace(data.workspace, source);
   if (workspace) spec.workspace = workspace;
+  if (data.env !== undefined) spec.env = stringArray(data.env, 'env', source);
+  const retry = normalizeRetry(data.retry, source);
+  if (retry) spec.retry = retry;
   if (isRecord(data.driverOptions)) spec.driverOptions = data.driverOptions;
 
   const prompt = body.trim();
@@ -127,11 +130,40 @@ function optionalNumber(value: unknown, field: string, source: string): number |
 
 function normalizeTools(value: unknown, source: string): ToolPolicy | undefined {
   if (value === undefined || value === null) return undefined;
-  if (!isRecord(value)) throw new Error(`${source}: "tools" must be a mapping with allow/deny`);
+  if (!isRecord(value)) throw new Error(`${source}: "tools" must be a mapping with allow/deny/mcpServers`);
   const tools: ToolPolicy = {};
   if (value.allow !== undefined) tools.allow = stringArray(value.allow, 'tools.allow', source);
   if (value.deny !== undefined) tools.deny = stringArray(value.deny, 'tools.deny', source);
+  if (value.mcpServers !== undefined) {
+    if (!isRecord(value.mcpServers)) throw new Error(`${source}: "tools.mcpServers" must be a mapping`);
+    const servers: Record<string, McpServerConfig> = {};
+    for (const [name, config] of Object.entries(value.mcpServers)) {
+      if (!isRecord(config) || typeof config.command !== 'string') {
+        throw new Error(`${source}: "tools.mcpServers.${name}" needs a "command"`);
+      }
+      const server: McpServerConfig = { command: config.command };
+      if (config.args !== undefined) server.args = stringArray(config.args, `tools.mcpServers.${name}.args`, source);
+      if (config.env !== undefined) {
+        if (!isRecord(config.env) || Object.values(config.env).some((v) => typeof v !== 'string')) {
+          throw new Error(`${source}: "tools.mcpServers.${name}.env" must map names to strings`);
+        }
+        server.env = config.env as Record<string, string>;
+      }
+      servers[name] = server;
+    }
+    tools.mcpServers = servers;
+  }
   return tools;
+}
+
+function normalizeRetry(value: unknown, source: string): RetryPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value) || typeof value.maxAttempts !== 'number') {
+    throw new Error(`${source}: "retry" must be a mapping with a numeric maxAttempts`);
+  }
+  const retry: RetryPolicy = { maxAttempts: value.maxAttempts };
+  if (value.on !== undefined) retry.on = stringArray(value.on, 'retry.on', source) as RunStatus[];
+  return retry;
 }
 
 function normalizeArtifacts(value: unknown, source: string): { globs: string[] } | undefined {
@@ -151,6 +183,8 @@ function normalizeLimits(value: unknown, source: string): HarnessSpec['limits'] 
   if (maxTurns !== undefined) limits.maxTurns = maxTurns;
   const timeoutMs = optionalNumber(value.timeoutMs, 'limits.timeoutMs', source);
   if (timeoutMs !== undefined) limits.timeoutMs = timeoutMs;
+  const maxWorkspaceBytes = optionalNumber(value.maxWorkspaceBytes, 'limits.maxWorkspaceBytes', source);
+  if (maxWorkspaceBytes !== undefined) limits.maxWorkspaceBytes = maxWorkspaceBytes;
   return limits;
 }
 

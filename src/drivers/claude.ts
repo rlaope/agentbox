@@ -1,12 +1,24 @@
 import type { DriverContext, RunEvent } from '../types.js';
 import { CliDriver, type CliInvocation, type CliParseState } from './cli.js';
 
+/** Relative to the workspace root, which is the CLI cwd in every sandbox. */
+const MCP_CONFIG_FILE = '.agentbox.mcp.json';
+
 /**
  * Adapter for headless Claude Code (`claude -p --output-format stream-json`).
- * Tool minimization maps to --allowedTools/--disallowedTools; warm resume maps to --resume.
+ * Tool minimization maps to --allowedTools/--disallowedTools; warm resume maps
+ * to --resume; declared MCP servers are injected via --mcp-config with
+ * --strict-mcp-config so the harness declaration is the complete tool surface.
  */
 export class ClaudeDriver extends CliDriver {
   readonly backend = 'claude' as const;
+
+  protected override async beforeRun(ctx: DriverContext): Promise<void> {
+    const servers = ctx.harness.tools?.mcpServers;
+    if (servers && Object.keys(servers).length > 0) {
+      await ctx.sandbox.writeFile(MCP_CONFIG_FILE, JSON.stringify({ mcpServers: servers }, null, 2));
+    }
+  }
 
   protected invocation(ctx: DriverContext): CliInvocation {
     const { harness } = ctx;
@@ -15,6 +27,9 @@ export class ClaudeDriver extends CliDriver {
     if (harness.systemPrompt) args.push('--append-system-prompt', harness.systemPrompt);
     if (harness.tools?.allow?.length) args.push('--allowedTools', harness.tools.allow.join(','));
     if (harness.tools?.deny?.length) args.push('--disallowedTools', harness.tools.deny.join(','));
+    if (harness.tools?.mcpServers && Object.keys(harness.tools.mcpServers).length > 0) {
+      args.push('--mcp-config', MCP_CONFIG_FILE, '--strict-mcp-config');
+    }
     if (harness.limits?.maxTurns) args.push('--max-turns', String(harness.limits.maxTurns));
     if (ctx.state.resumeId) args.push('--resume', ctx.state.resumeId);
     const command = (ctx.harness.driverOptions?.command as string) ?? 'claude';

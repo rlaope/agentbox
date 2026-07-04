@@ -27,6 +27,15 @@ export interface WorkspaceSpec {
 export interface HarnessLimits {
   maxTurns?: number;
   timeoutMs?: number;
+  /** Fail the run when the session workspace exceeds this size after the run */
+  maxWorkspaceBytes?: number;
+}
+
+export interface RetryPolicy {
+  /** Total attempts including the first one (>= 1) */
+  maxAttempts: number;
+  /** Statuses that trigger a retry. Defaults to ['failed', 'timeout']. */
+  on?: RunStatus[];
 }
 
 /**
@@ -44,7 +53,15 @@ export interface HarnessSpec {
   /** Artifact globs collected from the workspace after the run ends */
   artifacts?: { globs: string[] };
   limits?: HarnessLimits;
+  /** Retry policy for transient failures. Cancelled runs are never retried. */
+  retry?: RetryPolicy;
   sandbox?: SandboxKind;
+  /**
+   * Environment variable names forwarded from the server process into this
+   * harness's runs (on top of the framework base allowlist). Scopes secrets
+   * per task type instead of exposing everything to every agent.
+   */
+  env?: string[];
   /** Driver-specific options (CLI path, argument overrides, …) */
   driverOptions?: Record<string, unknown>;
 }
@@ -85,6 +102,7 @@ export type RunEvent =
   | { type: 'agent:thinking'; text: string }
   | { type: 'tool:call'; name: string; input?: unknown }
   | { type: 'tool:result'; name: string; ok: boolean; detail?: string }
+  | { type: 'run:retry'; runId: string; attempt: number; reason: string }
   | { type: 'run:done'; result: RunResult }
   | { type: 'run:error'; error: string; result?: RunResult };
 
@@ -110,6 +128,8 @@ export interface Sandbox {
    * (identity for the local sandbox, `docker run ...` for containers).
    */
   wrapCommand(spec: CommandSpec): CommandSpec;
+  /** Total bytes currently stored in the workspace (for quota enforcement). */
+  usage(): Promise<number>;
   destroy(): Promise<void>;
 }
 

@@ -51,19 +51,31 @@ async function handleRun(box: Agentbox, req: http.IncomingMessage, res: http.Ser
     });
   }
 
-  res.writeHead(200, {
-    'content-type': 'text/event-stream',
-    'cache-control': 'no-cache',
-    connection: 'keep-alive',
-  });
+  // Headers go out lazily on the first event, so pre-stream failures
+  // (unknown harness, bad backend) can still return a proper status code.
+  let streaming = false;
+  const ensureStream = () => {
+    if (streaming) return;
+    streaming = true;
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+  };
   try {
     await box.run(request, (event) => {
+      ensureStream();
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (!streaming) {
+      return sendJson(res, /unknown harness/.test(message) ? 404 : 500, { error: message });
+    }
     res.write(`data: ${JSON.stringify({ type: 'run:error', error: message })}\n\n`);
   }
+  ensureStream();
   res.end();
 }
 

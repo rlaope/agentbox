@@ -15,6 +15,14 @@ Operating this in production means solving four problems at the same time:
 
 agentbox makes these four the core contract of the framework.
 
+### Prior art
+
+The design deliberately borrows from — and positions against — neighboring systems:
+
+- **Sandbox infrastructure (E2B, Daytona, Modal, Fly Machines)** — the execution-layer providers. E2B runs each sandbox in a Firecracker microVM with a dedicated kernel; Daytona uses containers with warm pools and snapshot-restore for sub-100ms creation. agentbox sits one layer above: it orchestrates *agent harnesses* rather than raw code execution, and its `SandboxProvider` interface is where such providers plug in (local → container today, microVM-backed later). Their layered-isolation and workspace-quota ideas inform the per-harness env allowlists and `maxWorkspaceBytes` limits.
+- **Claude Agent SDK / Claude Code hooks** — the hook system (callbacks on lifecycle events, middleware-style) inspired `AgentboxHooks`. The SDK deliberately ships without built-in retry, telemetry, backpressure, or multi-tenant scheduling — exactly the operational layer a SaaS needs and exactly what agentbox provides on top (`retry` policies, `stats` metrics, bounded queues, per-user fairness).
+- **Server-side orchestration** — centralizing the inference→tool→inference loop inside the server trust boundary enables policy enforcement (tool allowlists, quotas, cancellation) at the cost of client flexibility; agentbox accepts that trade-off deliberately because isolation and governance are the point.
+
 ## 2. Concept model
 
 | Concept | Definition |
@@ -63,6 +71,8 @@ A container per request is overkill, so the unit of isolation is **a session = o
 
 - `LocalSandbox.writeFile` resolves paths and rejects escapes (`../`) outside the root.
 - Child process environment passes through an allowlist only (`PATH`, `HOME`, API keys, …), reducing the surface through which server-process secrets could leak into a workspace.
+- Secrets are additionally scoped per task type: `HarnessSpec.env` names extra variables forwarded only into that harness's runs (and across the container boundary via `-e`), so a PPT harness never sees the search harness's credentials.
+- `limits.maxWorkspaceBytes` enforces a per-session disk quota after each run; a run that blows the quota is failed rather than silently filling the host.
 - Backends enforce a second layer themselves: codex via `--sandbox workspace-write`, claude via the tool allowlist.
 
 ### Sandbox provider abstraction
@@ -73,9 +83,11 @@ The `SandboxProvider` interface (`create(id, spec) → Sandbox`) hides the isola
 ## 5. Throughput strategy
 
 1. **Session reuse (stateful warm sessions)** — requests for the same `(userId, goalId)` route to the same session. The workspace persists, so installed dependencies and intermediate outputs are reused, and the driver stores the backend resume id (claude `--resume`, codex `exec resume`) on the session, eliminating conversation-context rebuild cost.
-2. **Global concurrency cap + fairness** — `FairScheduler` bounds the number of concurrent runs server-wide (default 4) and round-robins across userId lanes so one user's burst cannot starve others.
-3. **Serialization within a session** — runs arriving concurrently for one session execute in arrival order. This structurally prevents file-area contention and resume-id races. Different sessions run in parallel.
-4. **Resource reaping** — a sweeper reclaims sessions idle past the TTL (default 30 min), workspace included. At the session-count cap, the LRU idle session is evicted first.
+2. **Global concurrency cap + fairness** — `FairScheduler` bounds the number of concurrent runs server-wide (default 4), round-robins across userId lanes so one user's burst cannot starve others, and optionally caps concurrent runs per user (`maxConcurrentRunsPerUser`) so a single tenant cannot hold every slot.
+3. **Bounded queueing (backpressure)** — `maxQueuedRuns` fails excess submissions fast with a `queue is full` result instead of building an unbounded backlog, and `queueTimeoutMs` fails runs that wait too long. Backpressure only applies to jobs that would actually wait; a job with a free slot always runs.
+4. **Serialization within a session** — runs arriving concurrently for one session execute in arrival order. This structurally prevents file-area contention and resume-id races. Different sessions run in parallel.
+5. **Retry without re-queueing** — a harness `retry` policy re-runs transient failures (`failed`/`timeout`, never `cancelled`) inside the already-held session slot, emitting `run:retry` events, so retries cost no extra queue trips.
+6. **Resource reaping** — a sweeper reclaims sessions idle past the TTL (default 30 min), workspace included. At the session-count cap, the LRU idle session is evicted first. `close({ drainMs })` drains in-flight runs before teardown.
 
 ## 6. Minimizing the tool surface
 
@@ -88,6 +100,8 @@ A harness declares `tools.allow / tools.deny`; the driver translates them into b
 | pi | programmatic tool registration (custom adapter extension point) | v0.1 is one-shot CLI execution; tool control is follow-up work |
 
 A narrower tool surface (1) cuts the turns an agent wastes exploring, lowering latency and cost, and (2) shrinks the blast radius under prompt injection. `limits.maxTurns` / `limits.timeoutMs` bound runaway runs.
+
+Custom tools enter through `tools.mcpServers`: declared MCP servers are written into the workspace as `.agentbox.mcp.json` and injected into the claude backend via `--mcp-config` with `--strict-mcp-config`, so the harness declaration remains the complete, closed tool surface — the agent gets exactly the declared servers and nothing else.
 
 ## 7. Harness authoring layers
 
@@ -110,7 +124,15 @@ Artifacts are declared as `artifacts.globs` on the harness. After the run ends, 
 ### Embedded SDK
 
 ```ts
-const box = new Agentbox({ maxConcurrentRuns: 8 });
+const box = new Agentbox({
+  maxConcurrentRuns: 8,
+  maxConcurrentRunsPerUser: 2,
+  maxQueuedRuns: 100,
+  queueTimeoutMs: 60_000,
+  hooks: {
+    onRunEnd: (result) => metrics.record(result), // observability middleware
+  },
+});
 box.register(pptGenerate);
 
 const result = await box.run(
@@ -124,7 +146,9 @@ const result = await box.run(
 - `POST /v1/runs` — body `{ session: { userId, goalId }, harness, prompt }`; response is an SSE event stream
 - `DELETE /v1/runs/{runId}` — cancel a run (id from the `run:start` event); kills a running driver, drops a queued run before it spawns
 - `GET /v1/harnesses` — registered harness list
-- `GET /v1/stats` — session count / running runs / queued runs
+- `GET /v1/stats` — sessions, running/queued/active runs, totals by status, average duration
+
+Pre-stream failures return proper status codes (404 unknown harness, 500 otherwise); queue overflow and queue timeout surface as terminal `run:error` events with a failed result rather than thrown errors.
 
 ## 10. Assumptions to verify
 
@@ -136,5 +160,6 @@ const result = await box.run(
 
 - **v0.2 (shipped)** — markdown harness authoring (`loadHarnessDir`) with hot reload
 - **v0.3 (shipped)** — container `SandboxProvider` (workspace volume = session, ephemeral execution containers per run), run cancellation (`Agentbox.cancel`, `DELETE /v1/runs/{id}`)
-- **v0.4** — harness packs (npm/git distribution of markdown harness directories), artifact store integration (S3, …), pi programmatic tool registration, MCP server injection (`tools.mcpServers`) across all backends
-- **v0.5** — metrics (run latency / tokens / failure rate), warm session pools (predictive pre-warming), multi-node scheduling (session→node affinity)
+- **v0.4 (shipped)** — queue backpressure + queue timeout + per-user concurrency caps, per-harness env allowlists, workspace quotas, retry policies, lifecycle hooks, runtime metrics, graceful drain, MCP server injection for the claude backend
+- **v0.5** — harness packs (npm/git distribution of markdown harness directories), artifact store integration (S3, …), pi programmatic tool registration, MCP injection for the remaining backends
+- **v0.6** — warm session pools (predictive pre-warming), snapshot/restore-style fast session creation, multi-node scheduling (session→node affinity)

@@ -61,6 +61,33 @@ export class LocalSandbox implements Sandbox {
     }
   }
 
+  async usage(): Promise<number> {
+    return this.usageOf(this.root);
+  }
+
+  private async usageOf(absDir: string): Promise<number> {
+    let total = 0;
+    let entries;
+    try {
+      entries = await fs.readdir(absDir, { withFileTypes: true });
+    } catch {
+      return 0;
+    }
+    for (const entry of entries) {
+      const abs = path.join(absDir, entry.name);
+      if (entry.isDirectory()) {
+        total += await this.usageOf(abs);
+      } else if (entry.isFile()) {
+        try {
+          total += (await fs.stat(abs)).size;
+        } catch {
+          // File vanished mid-walk; ignore.
+        }
+      }
+    }
+    return total;
+  }
+
   async destroy(): Promise<void> {
     await fs.rm(this.root, { recursive: true, force: true });
   }

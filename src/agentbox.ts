@@ -7,28 +7,57 @@ import { PiDriver } from './drivers/pi.js';
 import { listHarnessFiles, loadHarnessFile } from './harness/markdown.js';
 import { HarnessRegistry } from './harness/registry.js';
 import { LocalSandboxProvider } from './sandbox/local.js';
-import { FairScheduler } from './scheduler/scheduler.js';
+import { FairScheduler, QueueFullError, QueueTimeoutError } from './scheduler/scheduler.js';
 import { SessionManager } from './session/manager.js';
 import type {
   AgentBackend,
   AgentDriver,
+  DriverOutcome,
   HarnessSpec,
   RunEvent,
   RunRequest,
   RunResult,
+  RunStatus,
   SandboxKind,
   SandboxProvider,
 } from './types.js';
+
+/**
+ * Lifecycle hooks — middleware-style observation points. Hook failures are
+ * swallowed: observability must never break a run.
+ */
+export interface AgentboxHooks {
+  onRunStart?: (info: { runId: string; request: RunRequest; harness: HarnessSpec }) => void | Promise<void>;
+  onEvent?: (runId: string, event: RunEvent) => void | Promise<void>;
+  onRunEnd?: (result: RunResult, request: RunRequest) => void | Promise<void>;
+}
+
+export interface AgentboxStats {
+  sessions: number;
+  runningRuns: number;
+  queuedRuns: number;
+  activeRuns: number;
+  totalRuns: number;
+  byStatus: Partial<Record<RunStatus, number>>;
+  avgDurationMs: number;
+}
 
 export interface AgentboxOptions {
   /** Root directory for session workspaces. Defaults to ./.agentbox */
   baseDir?: string;
   /** Server-wide cap on concurrent runs. Defaults to 4 */
   maxConcurrentRuns?: number;
+  /** Cap on concurrently running runs per user. Unbounded by default. */
+  maxConcurrentRunsPerUser?: number;
+  /** Pending-queue cap; excess run() calls fail fast. Unbounded by default. */
+  maxQueuedRuns?: number;
+  /** Fail runs that wait longer than this in the queue. */
+  queueTimeoutMs?: number;
   session?: {
     idleTtlMs?: number;
     maxSessions?: number;
   };
+  hooks?: AgentboxHooks;
   /** Per-backend driver overrides (test doubles, custom adapters) */
   drivers?: Partial<Record<AgentBackend, AgentDriver>>;
   /** Additional/replacement isolation backends (default is the local process sandbox) */
@@ -49,6 +78,12 @@ export class Agentbox {
   /** markdown file absolute path → registered harness name */
   private readonly harnessFiles = new Map<string, string>();
   private readonly activeRuns = new Map<string, AbortController>();
+  private readonly hooks: AgentboxHooks;
+  private readonly metrics = {
+    totalRuns: 0,
+    byStatus: {} as Partial<Record<RunStatus, number>>,
+    totalDurationMs: 0,
+  };
 
   constructor(opts: AgentboxOptions = {}) {
     const baseDir = path.resolve(opts.baseDir ?? '.agentbox');
@@ -61,7 +96,12 @@ export class Agentbox {
       idleTtlMs: opts.session?.idleTtlMs ?? 30 * 60_000,
       maxSessions: opts.session?.maxSessions ?? 256,
     });
-    this.scheduler = new FairScheduler(opts.maxConcurrentRuns ?? 4);
+    this.scheduler = new FairScheduler(opts.maxConcurrentRuns ?? 4, {
+      maxPerLane: opts.maxConcurrentRunsPerUser,
+      maxQueued: opts.maxQueuedRuns,
+      queueTimeoutMs: opts.queueTimeoutMs,
+    });
+    this.hooks = opts.hooks ?? {};
     this.drivers = new Map<AgentBackend, AgentDriver>([
       ['pi', new PiDriver()],
       ['codex', new CodexDriver()],
@@ -145,34 +185,45 @@ export class Agentbox {
 
     const runId = randomUUID();
     const startedAt = Date.now();
+    const emit = (event: RunEvent) => {
+      onEvent(event);
+      void this.safeHook(() => this.hooks.onEvent?.(runId, event));
+    };
     const session = await this.sessions.acquire(request.session, harness.sandbox ?? 'local', harness.workspace);
     const abort = new AbortController();
     this.activeRuns.set(runId, abort);
-    onEvent({ type: 'run:start', runId, sessionId: session.id, harness: harness.name });
+    emit({ type: 'run:start', runId, sessionId: session.id, harness: harness.name });
+    await this.safeHook(() => this.hooks.onRunStart?.({ runId, request, harness }));
 
-    let outcome;
+    let outcome: DriverOutcome;
     try {
       outcome = await this.scheduler.schedule(request.session.userId, () =>
-        session.runExclusive(async () => {
-          // Cancelled while queued: skip the driver entirely.
-          if (abort.signal.aborted) {
-            return { status: 'cancelled' as const, finalText: '' };
-          }
-          return driver.run(
-            {
-              runId,
-              harness,
-              prompt: request.prompt,
-              sandbox: session.sandbox,
-              state: session.stateFor(harness.backend),
-              signal: abort.signal,
-            },
-            onEvent,
-          );
-        }),
+        session.runExclusive(() =>
+          this.runAttempts(runId, request, harness, driver, session, abort.signal, emit),
+        ),
       );
+    } catch (err) {
+      // Backpressure surfaces as a failed result, not a thrown error, so the
+      // caller and the SSE stream both see a terminal run state.
+      if (err instanceof QueueFullError || err instanceof QueueTimeoutError) {
+        outcome = { status: 'failed', finalText: '', error: err.message };
+      } else {
+        this.activeRuns.delete(runId);
+        throw err;
+      }
     } finally {
       this.activeRuns.delete(runId);
+    }
+
+    if (outcome.status === 'succeeded' && harness.limits?.maxWorkspaceBytes !== undefined) {
+      const used = await session.sandbox.usage();
+      if (used > harness.limits.maxWorkspaceBytes) {
+        outcome = {
+          status: 'failed',
+          finalText: outcome.finalText,
+          error: `workspace exceeds quota (${used} > ${harness.limits.maxWorkspaceBytes} bytes)`,
+        };
+      }
     }
 
     const artifacts = harness.artifacts?.globs?.length
@@ -187,12 +238,58 @@ export class Agentbox {
       durationMs: Date.now() - startedAt,
       error: outcome.error,
     };
+    this.metrics.totalRuns++;
+    this.metrics.byStatus[result.status] = (this.metrics.byStatus[result.status] ?? 0) + 1;
+    this.metrics.totalDurationMs += result.durationMs;
     if (outcome.status === 'succeeded') {
-      onEvent({ type: 'run:done', result });
+      emit({ type: 'run:done', result });
     } else {
-      onEvent({ type: 'run:error', error: outcome.error ?? outcome.status, result });
+      emit({ type: 'run:error', error: outcome.error ?? outcome.status, result });
     }
+    await this.safeHook(() => this.hooks.onRunEnd?.(result, request));
     return result;
+  }
+
+  /** Retry loop; runs inside the session's exclusive slot so attempts stay serialized. */
+  private async runAttempts(
+    runId: string,
+    request: RunRequest,
+    harness: HarnessSpec,
+    driver: AgentDriver,
+    session: Awaited<ReturnType<SessionManager['acquire']>>,
+    signal: AbortSignal,
+    emit: (event: RunEvent) => void,
+  ): Promise<DriverOutcome> {
+    const maxAttempts = Math.max(1, harness.retry?.maxAttempts ?? 1);
+    const retryOn = new Set<RunStatus>(harness.retry?.on ?? ['failed', 'timeout']);
+    let outcome: DriverOutcome = { status: 'cancelled', finalText: '' };
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Cancelled while queued or between attempts: skip the driver entirely.
+      if (signal.aborted) return { status: 'cancelled', finalText: outcome.finalText };
+      outcome = await driver.run(
+        {
+          runId,
+          harness,
+          prompt: request.prompt,
+          sandbox: session.sandbox,
+          state: session.stateFor(harness.backend),
+          signal,
+        },
+        emit,
+      );
+      const retryable = retryOn.has(outcome.status) && outcome.status !== 'cancelled';
+      if (!retryable || attempt === maxAttempts) return outcome;
+      emit({ type: 'run:retry', runId, attempt: attempt + 1, reason: outcome.error ?? outcome.status });
+    }
+    return outcome;
+  }
+
+  private async safeHook(fn: () => unknown): Promise<void> {
+    try {
+      await fn();
+    } catch {
+      // Hooks are observability; they must never break a run.
+    }
   }
 
   /**
@@ -207,15 +304,30 @@ export class Agentbox {
     return true;
   }
 
-  get stats(): { sessions: number; runningRuns: number; queuedRuns: number } {
+  get stats(): AgentboxStats {
     return {
       sessions: this.sessions.size,
       runningRuns: this.scheduler.runningCount,
       queuedRuns: this.scheduler.pendingCount,
+      activeRuns: this.activeRuns.size,
+      totalRuns: this.metrics.totalRuns,
+      byStatus: { ...this.metrics.byStatus },
+      avgDurationMs:
+        this.metrics.totalRuns === 0
+          ? 0
+          : Math.round(this.metrics.totalDurationMs / this.metrics.totalRuns),
     };
   }
 
-  async close(): Promise<void> {
+  /**
+   * Shuts the runtime down. With `drainMs`, waits up to that long for
+   * in-flight runs to finish before tearing sessions down.
+   */
+  async close(opts: { drainMs?: number } = {}): Promise<void> {
+    const deadline = Date.now() + (opts.drainMs ?? 0);
+    while (this.activeRuns.size > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     for (const watcher of this.watchers) watcher.close();
     this.watchers.length = 0;
     await this.sessions.close();

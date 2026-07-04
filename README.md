@@ -32,7 +32,8 @@ agentbox makes these four the core contract of the framework.
 - **Session** — one `(userId, goalId)` pair owning one workspace and per-backend resume state. Follow-up requests for the same pair are routed to the same warm session (claude `--resume`, codex `exec resume`).
 - **Sandbox** — workspace isolation behind a provider interface. Process-level (`local`) by default; container/microVM providers plug in behind the same interface.
 - **Driver** — a backend adapter that translates the harness declaration into backend-native flags and normalizes output streams into common run events.
-- **FairScheduler** — a global concurrency cap plus per-user round-robin lanes, so one user's burst cannot starve everyone else.
+- **FairScheduler** — a global concurrency cap, per-user round-robin lanes, optional per-user concurrency caps, and bounded queueing with fast-fail backpressure and queue timeouts.
+- **Operations built in** — per-harness retry policies, lifecycle hooks (`onRunStart` / `onEvent` / `onRunEnd`), runtime metrics (`/v1/stats`), workspace quotas, per-harness secret scoping, and graceful drain on shutdown.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture.
 
@@ -129,7 +130,7 @@ Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only.
 
 ## Status
 
-v0.3 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade), markdown harness authoring with hot reload, docker-based container isolation, and run cancellation. Harness packs and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#11-roadmap).
+v0.4 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade), markdown harness authoring with hot reload, docker-based container isolation, run cancellation, and an operations layer: backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection, graceful drain. Harness packs and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#11-roadmap).
 
 ## Contributing
 

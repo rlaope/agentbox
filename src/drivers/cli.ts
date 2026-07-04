@@ -42,10 +42,22 @@ export abstract class CliDriver implements AgentDriver {
     emit: (event: RunEvent) => void,
   ): void;
 
+  /** Async setup before the invocation is built (e.g. writing config files). */
+  protected async beforeRun(_ctx: DriverContext): Promise<void> {}
+
   async run(ctx: DriverContext, emit: (event: RunEvent) => void): Promise<DriverOutcome> {
+    await this.beforeRun(ctx);
+    const base = this.invocation(ctx);
+    // Harness-scoped env vars ride on the invocation so the sandbox can
+    // forward them across its boundary (docker -e NAME for containers).
+    const harnessEnv: Record<string, string> = {};
+    for (const name of ctx.harness.env ?? []) {
+      const value = process.env[name];
+      if (value !== undefined) harnessEnv[name] = value;
+    }
     // The sandbox decides how the command crosses its boundary
     // (identity for local, `docker run ...` for containers).
-    const inv = ctx.sandbox.wrapCommand(this.invocation(ctx));
+    const inv = ctx.sandbox.wrapCommand({ ...base, env: { ...harnessEnv, ...base.env } });
     const timeoutMs = ctx.harness.limits?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     return await new Promise<DriverOutcome>((resolve) => {
