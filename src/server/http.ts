@@ -1,5 +1,6 @@
 import http from 'node:http';
 import type { Agentbox } from '../agentbox.js';
+import { renderPrometheus } from '../metrics/prometheus.js';
 import type { RunRequest } from '../types.js';
 
 export interface HttpServerOptions {
@@ -49,6 +50,12 @@ export function createHttpServer(box: Agentbox, opts: HttpServerOptions = {}): h
 
   return http.createServer(async (req, res) => {
     try {
+      // Metrics sit before the auth gate: scrapers rarely carry API keys and
+      // the endpoint exposes only aggregate counters, no tenant data.
+      if (req.method === 'GET' && req.url === '/metrics') {
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
+        return void res.end(renderPrometheus(box.stats));
+      }
       let binding = UNRESTRICTED;
       if (authRequired) {
         const resolved = resolveBinding(req, bindings);

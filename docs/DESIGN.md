@@ -152,6 +152,7 @@ const result = await box.run(
 - `DELETE /v1/runs/{runId}` — cancel a run (id from the `run:start` event); kills a running driver, drops a queued run before it spawns
 - `GET /v1/harnesses` — registered harness list
 - `GET /v1/stats` — sessions, running/queued/active runs, totals by status, average duration
+- `GET /metrics` — the same figures in Prometheus text format (scrapable without auth; aggregate counters only, no tenant data)
 
 Auth: `createHttpServer(box, { apiKeys: [...] })` requires `Authorization: Bearer <key>` or `x-api-key` on every endpoint (401 otherwise). Without configured keys the facade is open and must sit behind a trusted network boundary. Tenant binding (`keys: [{ key, userIds, harnesses }]`) scopes a key to specific users and harnesses: a bound key can only start, list, look up, and cancel runs for its own userIds (403 on a foreign user or harness, 404 rather than leaking a run it may not see), so a leaked key exposes one tenant instead of the fleet.
 
@@ -179,4 +180,4 @@ Drivers were verified against real CLIs (claude 2.1.201, codex-cli 0.140.0, pi) 
 - **v0.8 (shipped)** — multi-node scale-out (`ConsistentHashRouter` + `createGatewayServer` with session→node affinity, SSE proxying, fan-out lookups, aggregated stats) and snapshot/restore fast session creation (`SnapshotManager`, copy-on-write clones, `workspace.snapshot`)
 - **v0.9 (shipped)** — egress network control for container runs (domain-allowlisting proxy), per-key tenant binding on the HTTP facade
 - **shared queue (Redis/NATS)** — deliberately *not* built. Per-node fairness is enforced by `FairScheduler` and sessions are pinned to nodes by the gateway, so a cross-node queue would only matter if one node saturated while another sat idle for the *same* session — impossible under session affinity. It stays out until a concrete need (e.g. cross-node work stealing for burst tenants) appears; adding it speculatively is complexity without a problem.
-- **v1.0** — npm publish, snapshot/restore for the container layer (image-level warm pools), first-class metrics export (OpenTelemetry)
+- **v1.0 (shipped)** — Prometheus `/metrics` export (`renderPrometheus`), container image warm pool (`ContainerSandboxProvider.warm()` pre-pull), CHANGELOG, stable API. npm publish pending only on registry login.

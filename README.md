@@ -204,9 +204,13 @@ npm test
 
 Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only.
 
+## Observability
+
+`GET /v1/stats` returns JSON (sessions, running/queued/active runs, totals by status, average duration); `GET /metrics` returns the same figures in Prometheus text format, scrapable without auth. Lifecycle hooks (`onRunStart` / `onEvent` / `onRunEnd`) feed any external tracer. For container fleets, `ContainerSandboxProvider.warm()` pre-pulls the run image at boot so the first run skips pull latency.
+
 ## Status
 
-v0.9 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade with API-key auth, tenant binding, and run history), markdown harness authoring with hot reload, docker-based container isolation with domain-allowlist egress control, run cancellation, an operations layer (backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection for claude and codex, graceful drain), harness packs (git/npm/tarball/local) with an `agentbox add/list/remove` CLI, artifact stores, resume-state persistence across restarts, session pre-warming, copy-on-write workspace snapshots, and multi-node scale-out via a consistent-hash gateway. The claude and codex drivers are verified end-to-end against the real CLIs (warm resume included), and the container sandbox and egress proxy against a real docker daemon; see the [roadmap](docs/DESIGN.md#11-roadmap) for what's next.
+v1.0 — first stable release. Core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade with API-key auth, tenant binding, run history, and Prometheus `/metrics`), markdown harness authoring with hot reload, docker-based container isolation with domain-allowlist egress control and image warm pools, run cancellation, an operations layer (backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection for claude and codex, graceful drain), harness packs (git/npm/tarball/local) with an `agentbox add/list/remove` CLI, artifact stores, resume-state persistence across restarts, session pre-warming, copy-on-write workspace snapshots, and multi-node scale-out via a consistent-hash gateway. The claude and codex drivers are verified end-to-end against the real CLIs (warm resume included), and the container sandbox and egress proxy against a real docker daemon. Full history in the [CHANGELOG](CHANGELOG.md).
 
 ## Contributing
 

@@ -18,6 +18,7 @@ export { ClaudeDriver } from './drivers/claude.js';
 export { CodexDriver } from './drivers/codex.js';
 export { PiDriver } from './drivers/pi.js';
 export { createHttpServer, type HttpServerOptions, type KeyBinding } from './server/http.js';
+export { renderPrometheus } from './metrics/prometheus.js';
 export { startEgressProxy, domainAllowed, type EgressProxy, type EgressProxyOptions } from './server/egress.js';
 export { PackManager, isGitSource, isNpmSource, type InstallOptions, type PackInfo, type PackManifest } from './packs/manager.js';
 export { LocalArtifactStore } from './artifacts/local.js';

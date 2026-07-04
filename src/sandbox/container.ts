@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { CommandSpec, SandboxKind, SandboxProvider, Sandbox, WorkspaceSpec } from '../types.js';
@@ -124,4 +125,36 @@ export class ContainerSandboxProvider implements SandboxProvider {
     }
     return new ContainerSandbox(root, this.opts);
   }
+
+  /**
+   * Image-level warm pool: pre-pulls the run image so the first real run
+   * doesn't pay pull latency. Runs stay ephemeral (`docker run --rm`) for
+   * isolation — the "pool" is the locally cached image, not live containers.
+   * Call once at boot; resolves true once the image is present locally.
+   */
+  async warm(): Promise<boolean> {
+    try {
+      await runContainerCommand(this.opts.runtime, ['image', 'inspect', this.opts.image]);
+      return true; // already cached
+    } catch {
+      // not present — pull it
+    }
+    await runContainerCommand(this.opts.runtime, ['pull', this.opts.image]);
+    return true;
+  }
+}
+
+function runContainerCommand(command: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-2000);
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} ${args[0]} failed (exit ${code}): ${stderr.trim()}`));
+    });
+  });
 }
