@@ -102,3 +102,28 @@ test('gateway pins a session to one node and fans lookups out', async () => {
   await nodeA.box.close();
   await nodeB.box.close();
 });
+
+test('gateway /stats degrades to partial results when a node is down', async () => {
+  const nodeA = await makeNode('a');
+  // Point the second node at a dead port so its fan-out request fails.
+  const gateway = createGatewayServer([
+    { id: 'a', url: nodeA.url },
+    { id: 'b', url: 'http://127.0.0.1:1' },
+  ]);
+  await new Promise<void>((resolve) => gateway.listen(0, resolve));
+  const base = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
+
+  await nodeA.box.run({ session: { userId: 'u', goalId: 'g' }, harness: 'task', prompt: 'x' });
+
+  const res = await fetch(`${base}/v1/stats`);
+  assert.equal(res.status, 200);
+  const stats = (await res.json()) as { total: { totalRuns: number }; nodes: Record<string, unknown> };
+  // The live node's numbers still come through; the dead node is simply absent.
+  assert.equal(stats.total.totalRuns, 1);
+  assert.ok('a' in stats.nodes);
+  assert.ok(!('b' in stats.nodes));
+
+  await new Promise((r) => gateway.close(r));
+  await new Promise((r) => nodeA.server.close(r));
+  await nodeA.box.close();
+});

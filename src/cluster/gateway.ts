@@ -58,39 +58,54 @@ export function createGatewayServer(nodes: GatewayNode[], opts: GatewayOptions =
       }
 
       if (req.method === 'GET' && req.url === '/v1/stats') {
+        // Aggregate is order-independent, so fan out in parallel; a dead node
+        // degrades to partial results instead of erasing the whole fleet view.
         const perNode: Record<string, unknown> = {};
         const total = { sessions: 0, runningRuns: 0, queuedRuns: 0, activeRuns: 0, totalRuns: 0 };
-        for (const node of nodes) {
-          const stats = (await (await fetchImpl(`${node.url}/v1/stats`, { headers: nodeHeaders() })).json()) as Record<
-            string,
-            number
-          >;
-          perNode[node.id] = stats;
+        const settled = await Promise.allSettled(
+          nodes.map(async (node) => ({
+            id: node.id,
+            stats: (await (await fetchImpl(`${node.url}/v1/stats`, { headers: nodeHeaders() })).json()) as Record<
+              string,
+              number
+            >,
+          })),
+        );
+        for (const r of settled) {
+          if (r.status !== 'fulfilled') continue;
+          perNode[r.value.id] = r.value.stats;
           for (const field of Object.keys(total) as Array<keyof typeof total>) {
-            total[field] += stats[field] ?? 0;
+            total[field] += r.value.stats[field] ?? 0;
           }
         }
         return sendJson(res, 200, { total, nodes: perNode });
       }
 
       if (req.method === 'GET' && req.url === '/v1/runs') {
-        const merged: unknown[] = [];
-        for (const node of nodes) {
-          const runs = (await (await fetchImpl(`${node.url}/v1/runs`, { headers: nodeHeaders() })).json()) as unknown[];
-          merged.push(...runs);
-        }
+        const settled = await Promise.allSettled(
+          nodes.map(async (node) => (await (await fetchImpl(`${node.url}/v1/runs`, { headers: nodeHeaders() })).json()) as unknown[]),
+        );
+        const merged = settled.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
         return sendJson(res, 200, merged);
       }
 
       if ((req.method === 'GET' || req.method === 'DELETE') && req.url?.startsWith('/v1/runs/')) {
-        for (const node of nodes) {
-          const upstream = await fetchImpl(`${node.url}${req.url}`, {
-            method: req.method,
-            headers: nodeHeaders(),
-          });
-          if (upstream.status !== 404) return sendJson(res, upstream.status, await upstream.json());
-        }
-        return sendJson(res, 404, { error: 'run not found' });
+        // A run lives on exactly one node but the id doesn't carry which, so
+        // we fan out and take the first non-404 in node order. (A future
+        // improvement is to route directly by encoding the home node in the
+        // run id, removing the fan-out entirely.)
+        const url = req.url;
+        const method = req.method;
+        const responses = await Promise.all(
+          nodes.map(async (node) => {
+            const upstream = await fetchImpl(`${node.url}${url}`, { method, headers: nodeHeaders() });
+            return { status: upstream.status, body: (await upstream.json().catch(() => ({}))) as unknown };
+          }),
+        );
+        const owner = responses.find((r) => r.status !== 404);
+        return owner
+          ? sendJson(res, owner.status, owner.body)
+          : sendJson(res, 404, { error: 'run not found' });
       }
 
       sendJson(res, 404, { error: 'not found' });

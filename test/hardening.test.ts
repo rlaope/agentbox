@@ -106,6 +106,42 @@ test('workspace quota failure overrides a succeeded outcome', async () => {
   await box.close();
 });
 
+test('workspaceQuotaExcludes keeps excluded dirs out of the quota', async () => {
+  const write = async (ctx: DriverContext): Promise<DriverOutcome> => {
+    await ctx.sandbox.writeFile('node_modules/dep/big.bin', 'x'.repeat(1024));
+    await ctx.sandbox.writeFile('out/deck.txt', 'small');
+    return { status: 'succeeded', finalText: 'done' };
+  };
+  // Without the exclude, node_modules pushes the workspace over the quota.
+  const strict = await makeBox(new ScriptedDriver(write), { limits: { maxWorkspaceBytes: 100 } });
+  assert.equal((await strict.run(REQUEST)).status, 'failed');
+  await strict.close();
+
+  // With node_modules excluded, only out/ counts and the run passes.
+  const lenient = await makeBox(new ScriptedDriver(write), {
+    limits: { maxWorkspaceBytes: 100, workspaceQuotaExcludes: ['node_modules'] },
+  });
+  assert.equal((await lenient.run(REQUEST)).status, 'succeeded');
+  await lenient.close();
+});
+
+test('RunResult.toolCalls counts tool:call events across the run', async () => {
+  class EmittingDriver implements AgentDriver {
+    readonly backend = 'claude' as const;
+    async run(_ctx: DriverContext, emit: (e: RunEvent) => void): Promise<DriverOutcome> {
+      emit({ type: 'tool:call', name: 'Read' });
+      emit({ type: 'tool:call', name: 'Write' });
+      emit({ type: 'agent:message', text: 'done' });
+      emit({ type: 'tool:call', name: 'Read' });
+      return { status: 'succeeded', finalText: 'ok' };
+    }
+  }
+  const box = await makeBox(new EmittingDriver());
+  const result = await box.run(REQUEST);
+  assert.equal(result.toolCalls, 3);
+  await box.close();
+});
+
 test('lifecycle hooks observe start, events, and end without breaking runs', async () => {
   const driver = new ScriptedDriver(async () => ({ status: 'succeeded', finalText: 'ok' }));
   const seen: string[] = [];

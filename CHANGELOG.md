@@ -2,6 +2,14 @@
 
 All notable changes to agentbox are documented here. Versions follow semver.
 
+## 1.1.0
+
+Benchmark-driven refinements (reviewed by an architect pass before implementation).
+
+- **Per-run tool count**: `RunResult.toolCalls` reports how many tool calls the agent made, counted centrally from the event stream (backend-neutral, no driver changes). Lets operators tune per-harness tool allowlists.
+- **Parallel gateway fan-out**: `/v1/stats` and `/v1/runs` aggregate across nodes with `Promise.allSettled` (a dead node degrades to partial results instead of failing the whole response); run lookups take the first non-404 across nodes concurrently instead of sequentially.
+- **Opt-in quota excludes**: `limits.workspaceQuotaExcludes` skips named directories (e.g. `node_modules`) from the `maxWorkspaceBytes` walk. The default still counts the whole workspace — skipping was made explicit rather than a silent default, so the quota keeps bounding real disk usage unless the operator opts out.
+
 ## 1.0.0
 
 First stable release. The full framework surface — every roadmap feature shipped — with the claude and codex drivers verified end-to-end against the real CLIs and the container sandbox and egress proxy verified against a real docker daemon.

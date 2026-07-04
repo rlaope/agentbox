@@ -72,7 +72,7 @@ A container per request is overkill, so the unit of isolation is **a session = o
 - `LocalSandbox.writeFile` resolves paths and rejects escapes (`../`) outside the root.
 - Child process environment passes through an allowlist only (`PATH`, `HOME`, API keys, …), reducing the surface through which server-process secrets could leak into a workspace.
 - Secrets are additionally scoped per task type: `HarnessSpec.env` names extra variables forwarded only into that harness's runs (and across the container boundary via `-e`), so a PPT harness never sees the search harness's credentials.
-- `limits.maxWorkspaceBytes` enforces a per-session disk quota after each run; a run that blows the quota is failed rather than silently filling the host.
+- `limits.maxWorkspaceBytes` enforces a per-session disk quota after each run; a run that blows the quota is failed rather than silently filling the host. The walk counts the whole workspace by default (that is real disk usage); `limits.workspaceQuotaExcludes` is an explicit opt-in to skip named directories (e.g. `node_modules`) when the quota is meant to bound generated output rather than build dependencies.
 - Backends enforce a second layer themselves: codex via `--sandbox workspace-write`, claude via the tool allowlist.
 - **Egress control (v0.9)**: container runs can point `HTTP_PROXY`/`HTTPS_PROXY` at a `startEgressProxy({ allowedDomains })` instance, so an agent's network reach is a declared allowlist (the model API, a package registry) rather than the whole internet — HTTPS is checked at the CONNECT hostname and tunneled end-to-end, plain HTTP is forwarded by absolute-URI, everything else gets 403. This is a policy point for proxy-honoring clients; pair it with the container `network: 'none'` mode for a hard deny-all.
 
@@ -90,7 +90,7 @@ The `SandboxProvider` interface (`create(id, spec) → Sandbox`) hides the isola
 5. **Retry without re-queueing** — a harness `retry` policy re-runs transient failures (`failed`/`timeout`, never `cancelled`) inside the already-held session slot, emitting `run:retry` events, so retries cost no extra queue trips.
 6. **Resource reaping** — a sweeper reclaims sessions idle past the TTL (default 30 min), workspace included. At the session-count cap, the LRU idle session is evicted first. `close({ drainMs })` drains in-flight runs before teardown.
 7. **Workspace snapshots (v0.8)** — expensive setup (templates, seed files, dependency installs via a prepare command) happens once in `box.snapshots.create(name, workspace, { prepare })`; harnesses opt in with `workspace.snapshot: name` and new sessions clone the snapshot with copy-on-write speed (APFS clonefile / reflink, falling back to a plain copy).
-8. **Multi-node scale-out (v0.8)** — agentbox instances stay single-node (workspaces and resume state are node-local). `ConsistentHashRouter` pins each `(userId, goalId)` to one node with minimal remapping when the fleet changes, and `createGatewayServer(nodes)` fronts the fleet: runs route to their session's home node with SSE proxied through, run lookups and cancels fan out, stats aggregate. The artifact store is the durable cross-node layer.
+8. **Multi-node scale-out (v0.8)** — agentbox instances stay single-node (workspaces and resume state are node-local). `ConsistentHashRouter` pins each `(userId, goalId)` to one node with minimal remapping when the fleet changes, and `createGatewayServer(nodes)` fronts the fleet: runs route to their session's home node with SSE proxied through, run lookups and cancels fan out, stats aggregate. Fan-out is parallel — `/stats` and `/runs` aggregate with `Promise.allSettled` so a dead node degrades to partial results, and run lookups take the first non-404 across nodes concurrently. (Because a run id doesn't carry its home node, lookups still hit every node; encoding the home node into the run id would make them O(1) — a planned follow-up.) The artifact store is the durable cross-node layer.
 
 ## 6. Minimizing the tool surface
 
@@ -121,6 +121,8 @@ The direction is deliberately one-way: markdown compiles down to the spec. There
 ## 8. Event and artifact contract
 
 All backend output is normalized into a common `RunEvent` stream: `run:start`, `agent:message`, `agent:thinking`, `tool:call`, `tool:result`, `run:done`, `run:error`. The HTTP facade relays these as SSE, so a SaaS client can render progress without knowing which backend is underneath.
+
+Each `RunResult` carries `toolCalls` — the number of tool calls the agent made, counted centrally from the `tool:call` event stream so it is backend-neutral. It lets operators see which harnesses over-provision their tool allowlist (the A/B benchmark in §6 shows why that matters).
 
 Artifacts are declared as `artifacts.globs` on the harness. After the run ends, matching files are collected from the workspace and returned as `RunResult.artifacts` (relative path, absolute path, size). With an `ArtifactStore` configured (`artifactStore` option), collected artifacts are additionally uploaded to durable storage and annotated with a `url` — `LocalArtifactStore` archives to a directory, `S3ArtifactStore` PUTs to S3-compatible storage with dependency-free SigV4 signing (AWS S3, MinIO, R2 via `endpoint`). A store failure fails the run: losing durable copies should be loud. Serving the URLs to end users remains the SaaS layer's job.
 

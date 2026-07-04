@@ -34,6 +34,13 @@ export interface HarnessLimits {
   timeoutMs?: number;
   /** Fail the run when the session workspace exceeds this size after the run */
   maxWorkspaceBytes?: number;
+  /**
+   * Directory names excluded from the maxWorkspaceBytes quota walk (e.g.
+   * ["node_modules"]). Opt-in: by default the quota counts the whole
+   * workspace, since that is real disk usage. Set this only when the quota
+   * is meant to bound generated output rather than build dependencies.
+   */
+  workspaceQuotaExcludes?: string[];
 }
 
 export interface RetryPolicy {
@@ -111,6 +118,8 @@ export interface RunResult {
   finalText: string;
   artifacts: Artifact[];
   durationMs: number;
+  /** Tool calls the agent made this run (counted from the event stream) */
+  toolCalls: number;
   error?: string;
 }
 
@@ -146,8 +155,12 @@ export interface Sandbox {
    * (identity for the local sandbox, `docker run ...` for containers).
    */
   wrapCommand(spec: CommandSpec): CommandSpec;
-  /** Total bytes currently stored in the workspace (for quota enforcement). */
-  usage(): Promise<number>;
+  /**
+   * Total bytes currently stored in the workspace (for quota enforcement).
+   * `excludeDirs` names top-of-tree directory names to skip (e.g.
+   * "node_modules"); omit to count everything.
+   */
+  usage(excludeDirs?: string[]): Promise<number>;
   destroy(): Promise<void>;
 }
 

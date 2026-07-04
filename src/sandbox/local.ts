@@ -62,11 +62,11 @@ export class LocalSandbox implements Sandbox {
     }
   }
 
-  async usage(): Promise<number> {
-    return this.usageOf(this.root);
+  async usage(excludeDirs?: string[]): Promise<number> {
+    return this.usageOf(this.root, excludeDirs ? new Set(excludeDirs) : undefined);
   }
 
-  private async usageOf(absDir: string): Promise<number> {
+  private async usageOf(absDir: string, exclude?: Set<string>): Promise<number> {
     let total = 0;
     let entries;
     try {
@@ -77,7 +77,8 @@ export class LocalSandbox implements Sandbox {
     for (const entry of entries) {
       const abs = path.join(absDir, entry.name);
       if (entry.isDirectory()) {
-        total += await this.usageOf(abs);
+        if (exclude?.has(entry.name)) continue;
+        total += await this.usageOf(abs, exclude);
       } else if (entry.isFile()) {
         try {
           total += (await fs.stat(abs)).size;

@@ -221,7 +221,11 @@ export class Agentbox {
 
     const runId = randomUUID();
     const startedAt = Date.now();
+    // Tool calls are counted here, on the one stream every backend funnels
+    // through, so the count is backend-neutral and needs no driver changes.
+    let toolCalls = 0;
     const emit = (event: RunEvent) => {
+      if (event.type === 'tool:call') toolCalls++;
       onEvent(event);
       void this.safeHook(() => this.hooks.onEvent?.(runId, event));
     };
@@ -256,7 +260,7 @@ export class Agentbox {
     }
 
     if (outcome.status === 'succeeded' && harness.limits?.maxWorkspaceBytes !== undefined) {
-      const used = await session.sandbox.usage();
+      const used = await session.sandbox.usage(harness.limits.workspaceQuotaExcludes);
       if (used > harness.limits.maxWorkspaceBytes) {
         outcome = {
           status: 'failed',
@@ -291,6 +295,7 @@ export class Agentbox {
       finalText: outcome.finalText,
       artifacts,
       durationMs: Date.now() - startedAt,
+      toolCalls,
       error: outcome.error,
     };
     this.history.set(runId, result);
