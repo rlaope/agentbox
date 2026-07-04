@@ -83,6 +83,16 @@ export interface Artifact {
   path: string;
   absPath: string;
   bytes: number;
+  /** Where the artifact was uploaded, when an ArtifactStore is configured */
+  url?: string;
+}
+
+/**
+ * Uploads run artifacts to durable storage (S3, local archive, …) after
+ * collection. Returns the artifacts, typically annotated with url.
+ */
+export interface ArtifactStore {
+  store(runId: string, artifacts: Artifact[]): Promise<Artifact[]>;
 }
 
 export type RunStatus = 'succeeded' | 'failed' | 'cancelled' | 'timeout';

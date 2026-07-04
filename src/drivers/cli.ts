@@ -16,6 +16,10 @@ const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const ENV_ALLOWLIST = [
   'PATH',
   'HOME',
+  // USER/LOGNAME are required for macOS Keychain credential lookup
+  // (claude CLI subscription auth fails with "Not logged in" without USER).
+  'USER',
+  'LOGNAME',
   'SHELL',
   'TMPDIR',
   'LANG',

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { Agentbox } from '../src/agentbox.js';
-import { PackManager, isGitSource } from '../src/packs/manager.js';
+import { PackManager, isGitSource, isNpmSource } from '../src/packs/manager.js';
 
 const HARNESS_MD = (name: string) => `---\nname: ${name}\nbackend: pi\n---\nDo the ${name} task.\n`;
 
@@ -32,6 +33,35 @@ test('detects git sources vs local paths', () => {
   assert.ok(isGitSource('https://example.com/repo.git'));
   assert.ok(!isGitSource('./local/pack'));
   assert.ok(!isGitSource('/abs/path/pack'));
+});
+
+test('detects npm sources by explicit prefix', () => {
+  assert.ok(isNpmSource('npm:agentbox-office-pack'));
+  assert.ok(isNpmSource('npm:@acme/pack@1.2.0'));
+  assert.ok(!isNpmSource('agentbox-office-pack'));
+});
+
+test('installs a pack from a tarball, unwrapping the package/ directory', async () => {
+  const source = await makePackSource({
+    manifest: { name: 'tgz-pack', description: 'from tarball' },
+    inSubdir: true,
+    harnessNames: ['deck'],
+  });
+  // Shape it like an npm tarball: content nested under package/.
+  const tarDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentbox-tgz-'));
+  await fs.cp(source, path.join(tarDir, 'package'), { recursive: true });
+  const tarball = path.join(tarDir, 'pack-1.0.0.tgz');
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('tar', ['-czf', tarball, '-C', tarDir, 'package']);
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`tar exit ${code}`))));
+  });
+
+  const { manager } = await makeManager();
+  const pack = await manager.install(tarball);
+  assert.equal(pack.name, 'tgz-pack');
+  const listed = await manager.harnesses();
+  assert.deepEqual(listed[0].specs.map((s) => s.name), ['deck']);
 });
 
 test('installs a local pack by copying and resolves the conventional harnesses/ dir', async () => {

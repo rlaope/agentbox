@@ -95,9 +95,9 @@ A harness declares `tools.allow / tools.deny`; the driver translates them into b
 
 | Backend | Mapping | Granularity |
 |---|---|---|
-| claude | `--allowedTools`, `--disallowedTools`, `--max-turns` | per-tool + patterns (`Bash(node:*)`) — finest |
-| codex | `--sandbox read-only\|workspace-write\|danger-full-access` | sandbox-mode level — coarse; prefer claude/pi when fine-grained control matters |
-| pi | programmatic tool registration (custom adapter extension point) | v0.1 is one-shot CLI execution; tool control is follow-up work |
+| claude | `--allowedTools`, `--disallowedTools`, `--max-turns`, MCP via `--mcp-config --strict-mcp-config` | per-tool + patterns (`Bash(node:*)`) — finest |
+| codex | `--sandbox read-only\|workspace-write\|danger-full-access`, MCP via `-c mcp_servers.*` overrides | sandbox-mode level — coarse; prefer claude/pi when fine-grained control matters |
+| pi | `--tools a,b,c` allowlist (`--no-tools` for an empty allowlist); custom tools via `-e` extension files and `--skill` (driverOptions.extensions / .skills) | per-tool; extensions cover programmatic registration |
 
 A narrower tool surface (1) cuts the turns an agent wastes exploring, lowering latency and cost, and (2) shrinks the blast radius under prompt injection. `limits.maxTurns` / `limits.timeoutMs` bound runaway runs.
 
@@ -109,7 +109,7 @@ Task types are unbounded, so the framework does not try to ship them. The core o
 
 1. **Markdown (the 80% case)** — the authoring format. A harness file is skill-shaped: YAML frontmatter maps 1:1 onto `HarnessSpec` fields, the body becomes `systemPrompt`, and `name` defaults to the file basename. `box.loadHarnessDir(dir, { watch: true })` registers every `*.md` in a directory and hot-reloads on change: edits re-register, deletions unregister, and a mid-edit broken save keeps the previous registration in place. One markdown file = one task type.
 2. **TypeScript `defineHarness` (the 20% escape hatch)** — `HarnessSpec` is the intermediate representation both layers produce. Anything declaration cannot express — custom drivers, dynamic tool policies, conditional workspace seeding — is written in code against the same spec.
-3. **Harness packs (v0.5)** — directories of markdown harnesses distributed via git or shared as local folders, the way skill marketplaces work. `agentbox add <git-url|dir>` installs a pack into `.agentbox/packs` (staged and validated first, so a broken pack never lands), an optional `agentbox-pack.json` manifest carries name/version/description and the harness subdirectory, and `box.loadHarnessPacks()` registers every installed pack at boot — in name order, later packs overriding same-named harnesses. `agentbox list` / `agentbox remove` manage the installation.
+3. **Harness packs (v0.5, extended in v0.6)** — directories of markdown harnesses distributed via git, npm, tarballs, or local folders, the way skill marketplaces work. `agentbox add <git-url|npm:name|file.tgz|dir>` installs a pack into `.agentbox/packs` (staged and validated first, so a broken pack never lands), an optional `agentbox-pack.json` manifest carries name/version/description and the harness subdirectory, and `box.loadHarnessPacks()` registers every installed pack at boot — in name order, later packs overriding same-named harnesses. `agentbox list` / `agentbox remove` manage the installation.
 
 The direction is deliberately one-way: markdown compiles down to the spec. There is no code→markdown converter — code expresses functions and conditionals that markdown cannot, so such a conversion would be lossy and the converter itself a maintenance sink.
 
@@ -117,7 +117,7 @@ The direction is deliberately one-way: markdown compiles down to the spec. There
 
 All backend output is normalized into a common `RunEvent` stream: `run:start`, `agent:message`, `agent:thinking`, `tool:call`, `tool:result`, `run:done`, `run:error`. The HTTP facade relays these as SSE, so a SaaS client can render progress without knowing which backend is underneath.
 
-Artifacts are declared as `artifacts.globs` on the harness. After the run ends, matching files are collected from the workspace and returned as `RunResult.artifacts` (relative path, absolute path, size). Serving the files (issuing download URLs etc.) is the responsibility of the SaaS layer outside the framework.
+Artifacts are declared as `artifacts.globs` on the harness. After the run ends, matching files are collected from the workspace and returned as `RunResult.artifacts` (relative path, absolute path, size). With an `ArtifactStore` configured (`artifactStore` option), collected artifacts are additionally uploaded to durable storage and annotated with a `url` — `LocalArtifactStore` archives to a directory, `S3ArtifactStore` PUTs to S3-compatible storage with dependency-free SigV4 signing (AWS S3, MinIO, R2 via `endpoint`). A store failure fails the run: losing durable copies should be loud. Serving the URLs to end users remains the SaaS layer's job.
 
 ## 9. API
 
@@ -150,11 +150,14 @@ const result = await box.run(
 
 Pre-stream failures return proper status codes (404 unknown harness, 500 otherwise); queue overflow and queue timeout surface as terminal `run:error` events with a failed result rather than thrown errors.
 
-## 10. Assumptions to verify
+## 10. Verification status
 
-- **pi CLI invocation shape**: the default is `pi -p "<prompt>"`. If the deployed pi version differs, override via `driverOptions.command / args`; the default will be updated once confirmed.
-- **codex `--json` event schema**: experimental, fields may change. The parser is written defensively and ignores unrecognized lines.
-- **claude stream-json**: based on the `system:init / assistant / user / result` message types; re-verify on CLI upgrades.
+Drivers were verified against real CLIs (claude 2.1.201, codex-cli 0.140.0, pi) in v0.6:
+
+- **claude** — end-to-end verified: stream-json parsing, `--allowedTools` enforcement, artifact collection, and warm resume (`--resume`; a second run recalled state from the first). Finding: macOS Keychain credential lookup requires `USER` in the child environment — it is now on the env allowlist.
+- **codex** — end-to-end verified: `exec --json` event parsing (command_execution, file_change), artifact collection, and warm resume via `exec resume`. Finding: `--cd`/`--sandbox` are `exec`-only flags; on resume the sandbox mode rides on a `-c sandbox_mode=...` override and the spawn cwd stands in for `--cd`.
+- **pi** — flag surface verified against the installed CLI (`-p`, `--append-system-prompt`, `--tools`/`--no-tools`, `--model`/`--provider`, `--session-dir`/`--continue`, `-e`/`--skill`). A full run needs a provider API key, which this environment does not have; the invocation is covered by unit tests.
+- **codex `--json` schema** remains experimental upstream; the parser stays defensive and ignores unrecognized lines.
 
 ## 11. Roadmap
 
@@ -162,5 +165,5 @@ Pre-stream failures return proper status codes (404 unknown harness, 500 otherwi
 - **v0.3 (shipped)** — container `SandboxProvider` (workspace volume = session, ephemeral execution containers per run), run cancellation (`Agentbox.cancel`, `DELETE /v1/runs/{id}`)
 - **v0.4 (shipped)** — queue backpressure + queue timeout + per-user concurrency caps, per-harness env allowlists, workspace quotas, retry policies, lifecycle hooks, runtime metrics, graceful drain, MCP server injection for the claude backend
 - **v0.5 (shipped)** — harness packs: git/local-dir distribution of markdown harness directories, `agentbox add/list/remove` CLI, `loadHarnessPacks()` runtime loading
-- **v0.6** — artifact store integration (S3, …), pi programmatic tool registration, MCP injection for the remaining backends, npm-registry pack sources
-- **v0.7** — warm session pools (predictive pre-warming), snapshot/restore-style fast session creation, multi-node scheduling (session→node affinity)
+- **v0.6 (shipped)** — real-CLI verification of the claude/codex drivers (including warm resume), pi driver upgraded to the verified flag surface (`--tools` allowlist, extensions), MCP injection for codex, artifact stores (local archive + dependency-free S3), npm/tarball pack sources
+- **v0.7** — warm session pools (predictive pre-warming), snapshot/restore-style fast session creation, multi-node scheduling (session→node affinity), HTTP facade authentication

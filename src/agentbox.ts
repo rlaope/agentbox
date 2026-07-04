@@ -13,6 +13,7 @@ import { SessionManager } from './session/manager.js';
 import type {
   AgentBackend,
   AgentDriver,
+  ArtifactStore,
   DriverOutcome,
   HarnessSpec,
   RunEvent,
@@ -59,6 +60,8 @@ export interface AgentboxOptions {
     maxSessions?: number;
   };
   hooks?: AgentboxHooks;
+  /** Uploads collected artifacts to durable storage (S3, local archive, …) */
+  artifactStore?: ArtifactStore;
   /** Per-backend driver overrides (test doubles, custom adapters) */
   drivers?: Partial<Record<AgentBackend, AgentDriver>>;
   /** Additional/replacement isolation backends (default is the local process sandbox) */
@@ -81,6 +84,7 @@ export class Agentbox {
   private readonly harnessFiles = new Map<string, string>();
   private readonly activeRuns = new Map<string, AbortController>();
   private readonly hooks: AgentboxHooks;
+  private readonly artifactStore?: ArtifactStore;
   private readonly metrics = {
     totalRuns: 0,
     byStatus: {} as Partial<Record<RunStatus, number>>,
@@ -105,6 +109,7 @@ export class Agentbox {
       queueTimeoutMs: opts.queueTimeoutMs,
     });
     this.hooks = opts.hooks ?? {};
+    this.artifactStore = opts.artifactStore;
     this.drivers = new Map<AgentBackend, AgentDriver>([
       ['pi', new PiDriver()],
       ['codex', new CodexDriver()],
@@ -244,9 +249,21 @@ export class Agentbox {
       }
     }
 
-    const artifacts = harness.artifacts?.globs?.length
+    let artifacts = harness.artifacts?.globs?.length
       ? await session.sandbox.collect(harness.artifacts.globs)
       : [];
+    if (this.artifactStore && artifacts.length > 0) {
+      try {
+        artifacts = await this.artifactStore.store(runId, artifacts);
+      } catch (err) {
+        // Losing durable copies is a run failure; local copies still ride along.
+        outcome = {
+          status: 'failed',
+          finalText: outcome.finalText,
+          error: `artifact store: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
 
     const result: RunResult = {
       runId,

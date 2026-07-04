@@ -44,6 +44,15 @@ export function isGitSource(source: string): boolean {
   );
 }
 
+/** npm sources are explicit: npm:<package-name>[@version] */
+export function isNpmSource(source: string): boolean {
+  return source.startsWith('npm:');
+}
+
+function isTarballSource(source: string): boolean {
+  return source.endsWith('.tgz') || source.endsWith('.tar.gz');
+}
+
 function packNameFrom(source: string): string {
   const base = source.replace(/\/+$/, '').split('/').pop() ?? 'pack';
   return base.replace(/\.git$/, '').replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -81,19 +90,51 @@ async function resolvePackInfo(dir: string): Promise<PackInfo> {
   };
 }
 
-function gitClone(url: string, dest: string): Promise<void> {
+function run(command: string, args: string[], label: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', ['clone', '--depth', '1', url, dest], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
     let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
     child.stderr.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString()).slice(-2000);
     });
     child.on('error', reject);
     child.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`git clone failed (exit ${code}): ${stderr.trim()}`));
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`${label} failed (exit ${code}): ${stderr.trim()}`));
     });
   });
+}
+
+function gitClone(url: string, dest: string): Promise<void> {
+  return run('git', ['clone', '--depth', '1', url, dest], 'git clone').then(() => undefined);
+}
+
+/** Downloads an npm package tarball into destDir and returns its path. */
+async function npmPack(pkg: string, destDir: string): Promise<string> {
+  const stdout = await run('npm', ['pack', pkg, '--pack-destination', destDir], `npm pack ${pkg}`);
+  const filename = stdout.trim().split('\n').pop();
+  if (!filename) throw new Error(`npm pack ${pkg} produced no tarball`);
+  return path.join(destDir, filename);
+}
+
+/** Extracts a (gzipped) tarball; npm tarballs nest content under package/. */
+async function extractTarball(tarball: string, dest: string): Promise<void> {
+  await fs.mkdir(dest, { recursive: true });
+  await run('tar', ['-xzf', tarball, '-C', dest], `extract ${path.basename(tarball)}`);
+  const entries = await fs.readdir(dest, { withFileTypes: true });
+  if (entries.length === 1 && entries[0].isDirectory()) {
+    // Unwrap the single top-level directory (package/ for npm tarballs).
+    const inner = path.join(dest, entries[0].name);
+    const innerEntries = await fs.readdir(inner);
+    for (const name of innerEntries) {
+      await fs.rename(path.join(inner, name), path.join(dest, name));
+    }
+    await fs.rmdir(inner);
+  }
 }
 
 export interface InstallOptions {
@@ -120,10 +161,17 @@ export class PackManager {
       if (isGitSource(source)) {
         await gitClone(source, stagingPack);
         await fs.rm(path.join(stagingPack, '.git'), { recursive: true, force: true });
+      } else if (isNpmSource(source)) {
+        const tarball = await npmPack(source.slice('npm:'.length), staging);
+        await extractTarball(tarball, stagingPack);
+      } else if (isTarballSource(source)) {
+        await extractTarball(path.resolve(source), stagingPack);
       } else {
         const abs = path.resolve(source);
         const stat = await fs.stat(abs).catch(() => undefined);
-        if (!stat?.isDirectory()) throw new Error(`pack source "${source}" is not a directory or git URL`);
+        if (!stat?.isDirectory()) {
+          throw new Error(`pack source "${source}" is not a directory, git URL, npm:<name>, or .tgz`);
+        }
         await fs.cp(abs, stagingPack, { recursive: true });
       }
       await fs.writeFile(path.join(stagingPack, META_FILE), JSON.stringify({ source }, null, 2));

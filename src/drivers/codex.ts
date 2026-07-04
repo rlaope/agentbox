@@ -11,11 +11,31 @@ export class CodexDriver extends CliDriver {
 
   protected invocation(ctx: DriverContext): CliInvocation {
     const { harness } = ctx;
+    const sandboxMode = (harness.driverOptions?.sandboxMode as string) ?? 'workspace-write';
     const args = ['exec'];
-    if (ctx.state.resumeId) args.push('resume', ctx.state.resumeId);
-    args.push('--json', '--skip-git-repo-check', '--cd', ctx.sandbox.root);
-    args.push('--sandbox', (harness.driverOptions?.sandboxMode as string) ?? 'workspace-write');
+    if (ctx.state.resumeId) {
+      // `exec resume` has no --cd/--sandbox flags; the spawn cwd (workspace
+      // root) matches the recorded session cwd and the sandbox mode rides on
+      // a config override instead.
+      args.push('resume', ctx.state.resumeId, '--json', '--skip-git-repo-check');
+      args.push('-c', `sandbox_mode=${JSON.stringify(sandboxMode)}`);
+    } else {
+      args.push('--json', '--skip-git-repo-check', '--cd', ctx.sandbox.root, '--sandbox', sandboxMode);
+    }
     if (harness.model) args.push('--model', harness.model);
+    // Declared MCP servers map to codex config overrides (TOML via -c).
+    for (const [name, server] of Object.entries(harness.tools?.mcpServers ?? {})) {
+      args.push('-c', `mcp_servers.${name}.command=${JSON.stringify(server.command)}`);
+      if (server.args?.length) {
+        args.push('-c', `mcp_servers.${name}.args=${JSON.stringify(server.args)}`);
+      }
+      if (server.env && Object.keys(server.env).length > 0) {
+        const table = Object.entries(server.env)
+          .map(([key, value]) => `${key} = ${JSON.stringify(value)}`)
+          .join(', ');
+        args.push('-c', `mcp_servers.${name}.env={ ${table} }`);
+      }
+    }
     // codex exec has no system prompt flag, so prepend it to the prompt.
     const prompt = harness.systemPrompt ? `${harness.systemPrompt}\n\n${ctx.prompt}` : ctx.prompt;
     args.push(prompt);

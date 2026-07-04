@@ -33,7 +33,7 @@ agentbox makes these four the core contract of the framework.
 - **Sandbox** — workspace isolation behind a provider interface. Process-level (`local`) by default; container/microVM providers plug in behind the same interface.
 - **Driver** — a backend adapter that translates the harness declaration into backend-native flags and normalizes output streams into common run events.
 - **FairScheduler** — a global concurrency cap, per-user round-robin lanes, optional per-user concurrency caps, and bounded queueing with fast-fail backpressure and queue timeouts.
-- **Operations built in** — per-harness retry policies, lifecycle hooks (`onRunStart` / `onEvent` / `onRunEnd`), runtime metrics (`/v1/stats`), workspace quotas, per-harness secret scoping, and graceful drain on shutdown.
+- **Operations built in** — per-harness retry policies, lifecycle hooks (`onRunStart` / `onEvent` / `onRunEnd`), runtime metrics (`/v1/stats`), workspace quotas, per-harness secret scoping, artifact stores (local archive or dependency-free S3/SigV4), and graceful drain on shutdown.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture.
 
@@ -104,7 +104,9 @@ With `watch: true` the runtime hot-reloads: edits re-register, deletions unregis
 Harness directories travel as packs — a git repo or local folder of `*.md` harnesses with an optional `agentbox-pack.json` manifest (`name`, `version`, `description`, `harnesses` subdir):
 
 ```sh
-npx agentbox add https://github.com/acme/office-pack   # or a local directory
+npx agentbox add https://github.com/acme/office-pack   # git
+npx agentbox add npm:@acme/office-pack                 # npm registry
+npx agentbox add ./office-pack                         # local dir or .tgz
 npx agentbox list
 npx agentbox remove office-pack
 ```
@@ -146,7 +148,7 @@ Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only.
 
 ## Status
 
-v0.5 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade), markdown harness authoring with hot reload, docker-based container isolation, run cancellation, an operations layer (backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection, graceful drain), and harness packs with an `agentbox add/list/remove` CLI. Artifact stores and pi programmatic tool control are on the [roadmap](docs/DESIGN.md#11-roadmap).
+v0.6 — core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade), markdown harness authoring with hot reload, docker-based container isolation, run cancellation, an operations layer (backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection for claude and codex, graceful drain), harness packs (git/npm/tarball/local) with an `agentbox add/list/remove` CLI, and artifact stores. The claude and codex drivers are verified end-to-end against the real CLIs, warm resume included; see the [roadmap](docs/DESIGN.md#11-roadmap) for what's next.
 
 ## Contributing
 

@@ -18,4 +18,6 @@ export { ClaudeDriver } from './drivers/claude.js';
 export { CodexDriver } from './drivers/codex.js';
 export { PiDriver } from './drivers/pi.js';
 export { createHttpServer } from './server/http.js';
-export { PackManager, isGitSource, type InstallOptions, type PackInfo, type PackManifest } from './packs/manager.js';
+export { PackManager, isGitSource, isNpmSource, type InstallOptions, type PackInfo, type PackManifest } from './packs/manager.js';
+export { LocalArtifactStore } from './artifacts/local.js';
+export { S3ArtifactStore, type S3ArtifactStoreOptions } from './artifacts/s3.js';
