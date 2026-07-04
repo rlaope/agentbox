@@ -2,11 +2,9 @@
   <img src="docs/assets/banner.png" alt="agentbox" width="100%" />
 </p>
 
-# agentbox
+# agentbox [![npm](https://img.shields.io/npm/v/@rlaope/agentbox?label=npm%20package)](https://www.npmjs.com/package/@rlaope/agentbox) [![CI](https://github.com/rlaope/agentbox/actions/workflows/ci.yml/badge.svg)](https://github.com/rlaope/agentbox/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**The AI Agent Framework — Sandboxed Multi-Agent Orchestration, High-Throughput Stateful Agents, Modular Agent Session Manager & Runtime.**
-
-agentbox lets a SaaS backend run coding agents (pi / codex / claude code) as its execution engine. A user request comes in through your API, agentbox acquires a session, runs the agent inside an isolated workspace with a task-specific harness, and returns the artifacts. Declare one harness per task type — PPT generation, document generation, bash script generation, anything an agent can build inside a workspace.
+agentbox is a server-side framework for running coding agents (pi / codex / claude code) as your SaaS backend's execution engine. A request comes in through your API, agentbox acquires an isolated session, runs the agent inside it with a task-specific harness, and returns the artifacts. It is backend-agnostic and zero-dependency, built for the four problems that show up the moment you run agents for real: isolation, throughput, minimal tool surface, and pluggable backends.
 
 ```
 user → SaaS client → API call → agentbox
@@ -15,35 +13,33 @@ user → SaaS client → API call → agentbox
           → collect & return artifacts
 ```
 
-## Why
+> [!NOTE]
+> The claude and codex drivers are verified end-to-end against the real CLIs (warm resume included); the container sandbox and egress proxy against a real docker daemon. See the [design doc](docs/DESIGN.md) for the full architecture and [CHANGELOG](CHANGELOG.md) for release history.
 
-Running a general-purpose coding agent server-side is powerful but raises four problems at once:
+### Core concepts
 
-1. **Isolation** — different users/projects must never touch each other's files.
-2. **Throughput** — many concurrent sessions, and follow-up requests for the same unit of work should reuse an already-warm session instead of rebuilding context.
-3. **Minimal tool surface** — an agent with every tool enabled is slower and riskier. "Generate a PPT" only needs file writes and `node`. Tool surface should be declared per task type.
-4. **Pluggable backends** — the same harness should run on pi, codex, or claude code.
+1. [**Harness**](docs/DESIGN.md#2-concept-model) — an execution profile for one task type: backend, model, system prompt, tool allowlist, workspace seed, artifact globs, turn/time limits. Authored in TypeScript or [markdown](docs/DESIGN.md#7-harness-authoring-layers).
+2. [**Session**](docs/DESIGN.md#5-throughput-strategy) — one `(userId, goalId)` pair owning one workspace and per-backend resume state. Follow-up requests reuse the warm session (claude `--resume`, codex `exec resume`); resume state survives restarts.
+3. [**Sandbox**](docs/DESIGN.md#4-isolation-model) — workspace isolation behind a provider interface: process-level `local` by default, docker `container` with per-run ephemeral containers and domain-allowlist egress control.
+4. [**Driver**](docs/DESIGN.md#6-minimizing-the-tool-surface) — a backend adapter that maps the harness declaration onto backend-native flags (tool allowlists, MCP injection) and normalizes output into common run events.
+5. [**Scheduling**](docs/DESIGN.md#5-throughput-strategy) — a fair scheduler with a global concurrency cap, per-user round-robin lanes and caps, bounded queueing with fast-fail backpressure, and per-harness retries.
+6. [**Operations**](docs/DESIGN.md#8-event-and-artifact-contract) — lifecycle hooks, Prometheus `/metrics`, run history, workspace quotas, per-harness secret scoping, artifact stores (local or dependency-free S3), and graceful drain.
+7. [**Harness packs**](docs/DESIGN.md#7-harness-authoring-layers) — directories of markdown harnesses distributed via git / npm / tarball, installed with `agentbox add`, the way skill marketplaces work.
+8. [**Scale-out**](docs/DESIGN.md#5-throughput-strategy) — a consistent-hash gateway pins sessions to nodes and fronts a fleet; copy-on-write workspace snapshots make session creation cheap.
 
-agentbox makes these four the core contract of the framework.
+Explore the [examples](examples) directory to see it in action, and the [design doc](docs/DESIGN.md) for details.
 
-## Core concepts
+## Get started
 
-- **Harness** — an execution profile for one task type: backend, model, system prompt, tool allowlist, workspace seed, artifact globs, turn/time limits.
-- **Session** — one `(userId, goalId)` pair owning one workspace and per-backend resume state. Follow-up requests for the same pair are routed to the same warm session (claude `--resume`, codex `exec resume`).
-- **Sandbox** — workspace isolation behind a provider interface. Process-level (`local`) by default; container/microVM providers plug in behind the same interface.
-- **Driver** — a backend adapter that translates the harness declaration into backend-native flags and normalizes output streams into common run events.
-- **FairScheduler** — a global concurrency cap, per-user round-robin lanes, optional per-user concurrency caps, and bounded queueing with fast-fail backpressure and queue timeouts.
-- **Operations built in** — per-harness retry policies, lifecycle hooks (`onRunStart` / `onEvent` / `onRunEnd`), runtime metrics (`/v1/stats`), workspace quotas, per-harness secret scoping, artifact stores (local archive or dependency-free S3/SigV4), and graceful drain on shutdown.
-
-See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture.
-
-## Install
+Requires Node.js 20 or newer.
 
 ```sh
 npm install @rlaope/agentbox
 ```
 
-## Usage
+## Run your first harness
+
+A harness declares how one task type runs. Register it, then `run` against a session — the same `(userId, goalId)` is reused warm on the next call.
 
 ```ts
 import { Agentbox, defineHarness } from '@rlaope/agentbox';
@@ -68,7 +64,9 @@ const result = await box.run({
 console.log(result.artifacts); // [{ path: 'out/deck.pptx', ... }]
 ```
 
-Or run it as an HTTP server:
+_(The claude / codex CLIs must be installed and authenticated on the host.)_
+
+Or expose it over HTTP — runs stream back as SSE:
 
 ```sh
 npx tsx examples/server.ts
@@ -79,9 +77,7 @@ curl -N localhost:8787/v1/runs -d '{
 }'
 ```
 
-Events stream back as SSE (`run:start`, `agent:message`, `tool:call`, `run:done`, …) so your client can render progress without knowing which backend is underneath.
-
-## Markdown harnesses
+## Authoring harnesses in markdown
 
 TypeScript `defineHarness` is the escape hatch; markdown is the authoring format for the common case. A harness file is skill-shaped — YAML frontmatter for the spec, body as the system prompt:
 
@@ -97,86 +93,50 @@ You are a presentation-generation harness.
 Produce exactly one file: out/deck.pptx.
 ```
 
-Load a directory of them at boot — one markdown file is one task type:
-
 ```ts
-await box.loadHarnessDir('./harnesses', { watch: true });
+await box.loadHarnessDir('./harnesses', { watch: true }); // one file = one task type, hot-reloaded
+await box.loadHarnessPacks();                             // plus every installed pack
 ```
 
-With `watch: true` the runtime hot-reloads: edits re-register, deletions unregister, and a mid-edit broken save keeps the previous registration in place. `name` defaults to the file basename.
-
-## Harness packs
-
-Harness directories travel as packs — a git repo or local folder of `*.md` harnesses with an optional `agentbox-pack.json` manifest (`name`, `version`, `description`, `harnesses` subdir):
+Distribute directories of them as packs:
 
 ```sh
 npx agentbox add https://github.com/acme/office-pack   # git
 npx agentbox add npm:@acme/office-pack                 # npm registry
 npx agentbox add ./office-pack                         # local dir or .tgz
-npx agentbox list
-npx agentbox remove office-pack
-```
-
-Packs install into `.agentbox/packs` (staged and validated first — a pack with broken harness files is rejected before it lands) and the runtime picks them up at boot:
-
-```ts
-await box.loadHarnessPacks(); // registers every installed pack
 ```
 
 ## Container isolation
 
-When process-level isolation is not enough, plug in the docker-based provider and opt harnesses in with `sandbox: 'container'`. The workspace stays a host directory (volume = session); each run executes in an ephemeral `docker run --rm` container with the workspace bind-mounted, and a per-session home keeps backend resume state warm across containers:
+When process-level isolation is not enough, plug in the docker provider and opt harnesses in with `sandbox: 'container'`. Each run executes in an ephemeral `docker run --rm` container with only its own workspace bind-mounted; a per-session home keeps resume state warm across containers.
 
 ```ts
-import { Agentbox, ContainerSandboxProvider } from '@rlaope/agentbox';
+import { Agentbox, ContainerSandboxProvider, startEgressProxy } from '@rlaope/agentbox';
 
-const box = new Agentbox({
-  sandboxProviders: [
-    new ContainerSandboxProvider('.agentbox/sessions', {
-      image: 'my-agent-runner:latest', // image with the agent CLIs installed
-      extraArgs: ['--memory', '2g', '--cpus', '2'],
-    }),
-  ],
+const proxy = await startEgressProxy({ allowedDomains: ['api.anthropic.com', '*.npmjs.org'] });
+const provider = new ContainerSandboxProvider('.agentbox/sessions', {
+  image: 'my-agent-runner:latest',
+  egressProxyUrl: proxy.url,       // agents reach only the allowlisted domains
+  extraArgs: ['--memory', '2g', '--cpus', '2'],
 });
+await provider.warm();             // pre-pull the image so the first run skips pull latency
+
+const box = new Agentbox({ sandboxProviders: [provider] });
 ```
 
-Runs can be cancelled mid-flight — `box.cancel(runId)` in the SDK, `DELETE /v1/runs/{runId}` over HTTP (the id arrives in the `run:start` event). A running driver is killed; a queued run is dropped before it ever spawns.
+Runs can be cancelled mid-flight — `box.cancel(runId)` or `DELETE /v1/runs/{runId}`.
 
-## Locking down
+## Multi-tenant & scale-out
 
-Give a key a tenant binding so a leak exposes one tenant, not the fleet:
+Bind a key to a tenant so a leak exposes one tenant, not the fleet:
 
 ```ts
 createHttpServer(box, {
   keys: [{ key: 'acme-key', userIds: ['acme-1', 'acme-2'], harnesses: ['ppt-generate'] }],
 });
-// acme-key can only run ppt-generate for its own users; 403/404 otherwise.
 ```
 
-Constrain container network reach to a domain allowlist:
-
-```ts
-import { startEgressProxy, ContainerSandboxProvider } from '@rlaope/agentbox';
-
-const proxy = await startEgressProxy({ allowedDomains: ['api.anthropic.com', '*.npmjs.org'] });
-new ContainerSandboxProvider('.agentbox/sessions', {
-  image: 'my-agent-runner:latest',
-  egressProxyUrl: proxy.url, // agents can reach only the allowlisted domains
-});
-```
-
-## Scaling out
-
-Workspace snapshots make session creation cheap: build the expensive environment once, clone it copy-on-write per session:
-
-```ts
-await box.snapshots.create('deck-env',
-  { seedFiles: { 'package.json': '…' } },
-  { prepare: ['npm', 'install'] });
-// harness: workspace: { snapshot: 'deck-env' }
-```
-
-For multiple nodes, each agentbox instance stays single-node and a gateway pins sessions to their home node by consistent hash — SSE streams proxy through, lookups fan out, stats aggregate:
+Front a fleet of single-node instances with a consistent-hash gateway that pins each session to its home node (SSE proxied through, lookups fanned out, stats aggregated):
 
 ```ts
 import { createGatewayServer } from '@rlaope/agentbox';
@@ -190,9 +150,22 @@ createGatewayServer(
 ).listen(8080);
 ```
 
+Cut session creation cost with copy-on-write workspace snapshots — build the environment once, clone it per session:
+
+```ts
+await box.snapshots.create('deck-env',
+  { seedFiles: { 'package.json': '…' } },
+  { prepare: ['npm', 'install'] });
+// harness: workspace: { snapshot: 'deck-env' }
+```
+
+## Observability
+
+`GET /v1/stats` returns JSON (sessions, running/queued/active runs, totals by status, average duration); `GET /metrics` returns the same in Prometheus text format, scrapable without auth. Lifecycle hooks (`onRunStart` / `onEvent` / `onRunEnd`) feed any external tracer.
+
 ## Benchmarks
 
-Framework overhead only — drivers are simulated, so this measures agentbox's scheduling, session management, state persistence, and artifact collection, not LLM latency. Reproduce with `npx tsx bench/throughput.mts` (numbers below: Node 22, Apple M5).
+Framework overhead only — drivers are simulated, so this measures agentbox's scheduling, session management, state persistence, and artifact collection, not LLM latency. Reproduce with `npx tsx bench/throughput.mts` (Node 22, Apple M5).
 
 | Scenario | Result |
 |---|---|
@@ -208,19 +181,17 @@ npm run typecheck
 npm test
 ```
 
-Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only.
+Zero runtime dependencies; TypeScript, `tsx`, and `@types/node` are dev-only. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Observability
+## Acknowledgements
 
-`GET /v1/stats` returns JSON (sessions, running/queued/active runs, totals by status, average duration); `GET /metrics` returns the same figures in Prometheus text format, scrapable without auth. Lifecycle hooks (`onRunStart` / `onEvent` / `onRunEnd`) feed any external tracer. For container fleets, `ContainerSandboxProvider.warm()` pre-pulls the run image at boot so the first run skips pull latency.
+agentbox sits one layer above the agent runtimes and sandbox infrastructure it orchestrates, and borrows ideas from the surrounding ecosystem:
 
-## Status
-
-v1.0 — first stable release. Core runtime (local sandbox, three backend drivers, session manager, fair scheduler, HTTP/SSE facade with API-key auth, tenant binding, run history, and Prometheus `/metrics`), markdown harness authoring with hot reload, docker-based container isolation with domain-allowlist egress control and image warm pools, run cancellation, an operations layer (backpressure, per-user caps, retries, hooks, metrics, quotas, secret scoping, MCP injection for claude and codex, graceful drain), harness packs (git/npm/tarball/local) with an `agentbox add/list/remove` CLI, artifact stores, resume-state persistence across restarts, session pre-warming, copy-on-write workspace snapshots, and multi-node scale-out via a consistent-hash gateway. The claude and codex drivers are verified end-to-end against the real CLIs (warm resume included), and the container sandbox and egress proxy against a real docker daemon. Full history in the [CHANGELOG](CHANGELOG.md).
-
-## Contributing
-
-Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+- [Claude Code](https://code.claude.com/) & the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk) — the headless driver and the hook/middleware model
+- [OpenAI Codex CLI](https://github.com/openai/codex) — the `exec --json` driver and kernel-level sandbox modes
+- [pi](https://github.com/badlogic/pi-mono) — the embeddable, extension-based agent driver
+- [E2B](https://e2b.dev/) & [Daytona](https://www.daytona.io/) — sandbox-infrastructure ideas (warm pools, snapshots, layered isolation)
+- [Model Context Protocol](https://modelcontextprotocol.io/) — the custom-tool injection surface
 
 ## License
 
